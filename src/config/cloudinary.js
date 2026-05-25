@@ -12,10 +12,7 @@ function loadEnv() {
 
 function getApiBaseUrl() {
   const port = process.env.PORT || 5000;
-  const base =
-    process.env.API_URL ||
-    process.env.API_PUBLIC_URL ||
-    `http://localhost:${port}`;
+  const base = process.env.API_PUBLIC_URL || `http://localhost:${port}`;
   return base.replace(/\/api\/?$/, "").replace(/\/$/, "");
 }
 

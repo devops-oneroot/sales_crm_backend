@@ -37,6 +37,8 @@ const leadSchema = new mongoose.Schema(
         "feed",
         "ethanol",
         "starch",
+        "TRADING",
+        "FMCG",
       ],
       trim: true,
     },
@@ -57,7 +59,13 @@ const leadSchema = new mongoose.Schema(
     followUpDate: { type: Date },
     status: {
       type: String,
-      enum: ["identity", "contact_established", "in_progress", "deal"],
+      enum: [
+        "identity",
+        "contact_established",
+        "in_progress",
+        "deal",
+        "junk",
+      ],
       default: "identity",
     },
     remarks: [remarkSchema],

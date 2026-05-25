@@ -17,7 +17,13 @@ const {
 
 const router = express.Router();
 
-const STATUSES = ["identity", "contact_established", "in_progress", "deal"];
+const STATUSES = [
+  "identity",
+  "contact_established",
+  "in_progress",
+  "deal",
+  "junk",
+];
 
 function leadWithDocumentUrls(lead) {
   const obj = lead.toObject ? lead.toObject() : { ...lead };

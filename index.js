@@ -12,6 +12,8 @@ const {
   configureCloudinary,
   getCloudName,
 } = require("./src/config/cloudinary");
+const authRouter = require("./src/routes/auth");
+const { requireAuth } = require("./src/middleware/auth");
 const leadsRouter = require("./src/routes/leads");
 const teamRouter = require("./src/routes/team");
 
@@ -34,8 +36,9 @@ app.get("/api/health", (_req, res) => {
   });
 });
 
-app.use("/api/leads", leadsRouter);
-app.use("/api/team", teamRouter);
+app.use("/api/auth", authRouter);
+app.use("/api/leads", requireAuth, leadsRouter);
+app.use("/api/team", requireAuth, teamRouter);
 
 async function start() {
   try {

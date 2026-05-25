@@ -1,6 +1,6 @@
 const Lead = require("../models/Lead");
 
-const TEAM_MEMBERS = ["Rohan", "Rahul", "Tejas"];
+const TEAM_MEMBERS = ["Rohan", "Rahul", "Tejas", "Shiva"];
 
 async function migrateInvalidResponsiblePersons() {
   const result = await Lead.updateMany(

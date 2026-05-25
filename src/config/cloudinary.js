@@ -12,10 +12,11 @@ function loadEnv() {
 
 function getApiBaseUrl() {
   const port = process.env.PORT || 5000;
-  return (process.env.API_PUBLIC_URL || `http://localhost:${port}`).replace(
-    /\/$/,
-    ""
-  );
+  const base =
+    process.env.API_URL ||
+    process.env.API_PUBLIC_URL ||
+    `http://localhost:${port}`;
+  return base.replace(/\/api\/?$/, "").replace(/\/$/, "");
 }
 
 function isPdfDocument(doc) {

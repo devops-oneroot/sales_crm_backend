@@ -15,6 +15,7 @@ const documentSchema = new mongoose.Schema(
     publicId: { type: String },
     resourceType: { type: String, enum: ["image", "raw"], default: "image" },
     format: { type: String },
+    version: { type: Number },
     bytes: { type: Number },
   },
   { timestamps: true }

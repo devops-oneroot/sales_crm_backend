@@ -22,7 +22,9 @@ const STATUSES = ["identity", "contact_established", "in_progress", "deal"];
 function leadWithDocumentUrls(lead) {
   const obj = lead.toObject ? lead.toObject() : { ...lead };
   if (obj.documents?.length) {
-    obj.documents = obj.documents.map((doc) => mapDocumentForClient(doc));
+    obj.documents = obj.documents.map((doc) =>
+      mapDocumentForClient(doc, obj._id)
+    );
   }
   return obj;
 }
@@ -149,16 +151,13 @@ router.post("/:id/documents", (req, res, next) => {
     const uploadOptions = getUploadOptions(req.file, req.params.id);
     const result = await uploadBuffer(req.file.buffer, uploadOptions);
 
-    const resourceType = isPdfFile(req.file) ? "raw" : "image";
-    const docPayload = {
+    const doc = {
       name: req.file.originalname,
       publicId: result.public_id,
-      resourceType,
+      resourceType: result.resource_type || "image",
       format: result.format,
       bytes: result.bytes,
-    };
-    const doc = {
-      ...docPayload,
+      version: result.version,
       url: result.secure_url,
     };
 

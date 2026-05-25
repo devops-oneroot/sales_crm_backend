@@ -46,36 +46,34 @@ function resourceTypesForDoc(doc) {
 }
 
 function configureCloudinary() {
-  if (ready) return true;
-
   loadEnv();
 
   const cloud_name = process.env.CLOUD_NAME?.trim();
   const api_key = process.env.CLOUD_API_KEY?.trim();
   const api_secret = process.env.CLOUD_API_SECRET?.trim();
 
-  if (!cloud_name || !api_key || !api_secret) {
-    const cloudinaryUrl = process.env.CLOUDINARY_URL?.trim();
-    if (cloudinaryUrl) {
-      cloudinary.config({ secure: true });
-      ready = true;
-      return true;
-    }
-    return false;
+  if (cloud_name && api_key && api_secret) {
+    delete process.env.CLOUDINARY_URL;
+    cloudinary.config({
+      cloud_name,
+      api_key,
+      api_secret,
+      secure: true,
+    });
+    ready = true;
+    return true;
   }
 
-  // Prevent a system-wide CLOUDINARY_URL from pointing at a different account.
-  delete process.env.CLOUDINARY_URL;
+  if (ready) return true;
 
-  cloudinary.config({
-    cloud_name,
-    api_key,
-    api_secret,
-    secure: true,
-  });
+  const cloudinaryUrl = process.env.CLOUDINARY_URL?.trim();
+  if (cloudinaryUrl) {
+    cloudinary.config({ secure: true });
+    ready = true;
+    return true;
+  }
 
-  ready = true;
-  return true;
+  return false;
 }
 
 function getCloudName() {
@@ -98,10 +96,9 @@ function getUploadOptions(file, leadId) {
 
   if (isPdfFile(file)) {
     return {
-      resource_type: "raw",
+      resource_type: "image",
       folder: "sales-crm/leads",
       public_id: baseId,
-      format: "pdf",
       type: "upload",
       access_mode: "public",
     };
@@ -120,60 +117,90 @@ function resolveResourceType(doc) {
   if (doc.resourceType === "raw" || doc.resourceType === "image") {
     return doc.resourceType;
   }
-  // Legacy PDFs were uploaded as image; new PDFs use raw.
   return "image";
 }
 
 function buildDeliveryUrl(doc) {
+  if (doc.url && isCloudinaryUrl(doc.url)) {
+    return attachmentUrl(doc.url);
+  }
   if (!doc.publicId) return doc.url;
 
   const resourceType = resolveResourceType(doc);
-
-  if (resourceType === "raw") {
-    return cloudinary.url(doc.publicId, {
-      resource_type: "raw",
-      secure: true,
-      flags: "attachment",
-    });
-  }
-
-  return cloudinary.url(doc.publicId, {
-    resource_type: "image",
+  const publicId = normalizePublicId(doc);
+  const options = {
+    resource_type: resourceType,
     secure: true,
     flags: "attachment",
-  });
+    type: "upload",
+  };
+  if (doc.version) options.version = doc.version;
+
+  return cloudinary.url(publicId, options);
+}
+
+function normalizePublicId(doc) {
+  if (!doc.publicId) return doc.publicId;
+  if (doc.resourceType === "raw" && doc.publicId.endsWith(".pdf")) {
+    return doc.publicId.replace(/\.pdf$/i, "");
+  }
+  return doc.publicId;
 }
 
 function buildViewUrl(doc) {
   if (!doc.publicId) return doc.url;
 
   const resourceType = resolveResourceType(doc);
-
-  return cloudinary.url(doc.publicId, {
+  const options = {
     resource_type: resourceType,
     secure: true,
-    sign_url: true,
     type: "upload",
-  });
+  };
+  if (doc.version) options.version = doc.version;
+
+  return cloudinary.url(normalizePublicId(doc), options);
+}
+
+function attachmentUrl(secureUrl) {
+  if (!secureUrl || !isCloudinaryUrl(secureUrl)) return secureUrl;
+  if (secureUrl.includes("/fl_attachment/")) return secureUrl;
+  return secureUrl.replace("/upload/", "/upload/fl_attachment/");
 }
 
 function buildDocumentServeUrl(leadId, docId) {
   return `${getApiBaseUrl()}/api/leads/${leadId}/documents/${docId}/file`;
 }
 
-/** Cloudinary URLs for the frontend (not backend proxy). */
-function mapDocumentForClient(doc) {
-  const d = doc.toObject ? doc.toObject() : { ...doc };
+function isCloudinaryUrl(url) {
+  return typeof url === "string" && /res\.cloudinary\.com/i.test(url);
+}
 
-  if (!configureCloudinary() || !d.publicId) {
-    return d;
+/** Use secure_url from upload; viewUrl streams via backend (works for all PDFs). */
+function mapDocumentForClient(doc, leadId) {
+  const d = doc.toObject ? doc.toObject() : { ...doc };
+  const viewUrl =
+    leadId && d._id ? buildDocumentServeUrl(leadId, d._id) : undefined;
+
+  if (d.url && isCloudinaryUrl(d.url)) {
+    return {
+      ...d,
+      url: d.url,
+      viewUrl,
+      downloadUrl: attachmentUrl(d.url),
+    };
   }
 
-  return {
-    ...d,
-    url: buildViewUrl(d),
-    downloadUrl: buildDeliveryUrl(d),
-  };
+  if (configureCloudinary() && d.publicId) {
+    const url = buildViewUrl(d);
+    return {
+      ...d,
+      url,
+      viewUrl,
+      downloadUrl: buildDeliveryUrl({ ...d, url }),
+    };
+  }
+
+  return { ...d, viewUrl };
 }
 
 async function fetchDocumentResponse(doc) {
@@ -239,7 +266,11 @@ async function fetchDocumentResponse(doc) {
     }
   }
 
-  if (doc.url) attempts.push(doc.url);
+  if (doc.url && isCloudinaryUrl(doc.url)) {
+    attempts.unshift(doc.url);
+  } else if (doc.url) {
+    attempts.push(doc.url);
+  }
 
   for (const url of attempts) {
     try {

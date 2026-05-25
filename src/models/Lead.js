@@ -24,6 +24,7 @@ const documentSchema = new mongoose.Schema(
 const leadSchema = new mongoose.Schema(
   {
     name: { type: String, required: true, trim: true },
+    contactPerson: { type: String, trim: true },
     phone: { type: String, trim: true },
     email: { type: String, trim: true, lowercase: true },
     company: { type: String, trim: true },
@@ -45,6 +46,13 @@ const leadSchema = new mongoose.Schema(
     creditRating: { type: String, trim: true },
     companyTurnover: { type: Number, min: 0 },
     sourcingRegion: { type: String, trim: true },
+    products: [
+      {
+        name: { type: String, trim: true },
+        quantity: { type: Number, min: 0, default: 0 },
+        price: { type: Number, min: 0, default: 0 },
+      },
+    ],
     product: {
       name: { type: String, trim: true },
       quantity: { type: Number, min: 0, default: 0 },

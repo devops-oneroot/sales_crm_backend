@@ -61,6 +61,37 @@ function leadWithDocumentUrls(lead) {
   return obj;
 }
 
+function normalizeLeadBody(body) {
+  const data = { ...body };
+  const company = String(data.company || "").trim();
+  const contactPerson = String(data.contactPerson || "").trim();
+
+  if (!data.name?.trim()) {
+    data.name = company || contactPerson || "—";
+  }
+
+  if (Array.isArray(data.products) && data.products.length) {
+    const names = data.products.map((p) => p.name).filter(Boolean);
+    data.product = {
+      name: names.join(", "),
+      quantity: data.products[0]?.quantity ?? data.product?.quantity ?? 0,
+      price: data.products[0]?.price ?? data.product?.price ?? 0,
+    };
+  } else if (data.product?.name) {
+    const names = String(data.product.name)
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    data.products = names.map((name) => ({
+      name,
+      quantity: data.product.quantity ?? 0,
+      price: data.product.price ?? 0,
+    }));
+  }
+
+  return data;
+}
+
 router.get("/", async (req, res) => {
   try {
     const { status } = req.query;
@@ -84,8 +115,8 @@ router.get("/:id", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    const lead = await Lead.create(req.body);
-    res.status(201).json(lead);
+    const lead = await Lead.create(normalizeLeadBody(req.body));
+    res.status(201).json(leadWithDocumentUrls(lead));
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -93,10 +124,14 @@ router.post("/", async (req, res) => {
 
 router.patch("/:id", async (req, res) => {
   try {
-    const lead = await Lead.findByIdAndUpdate(req.params.id, req.body, {
-      new: true,
-      runValidators: true,
-    });
+    const lead = await Lead.findByIdAndUpdate(
+      req.params.id,
+      normalizeLeadBody(req.body),
+      {
+        new: true,
+        runValidators: true,
+      }
+    );
     if (!lead) return res.status(404).json({ message: "Lead not found" });
     res.json(leadWithDocumentUrls(lead));
   } catch (err) {

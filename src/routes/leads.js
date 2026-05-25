@@ -17,6 +17,34 @@ const {
 
 const router = express.Router();
 
+function guessDocumentContentType(doc, response) {
+  if (isPdfDocument(doc)) return "application/pdf";
+  const ext = (doc.format || doc.name?.split(".").pop() || "").toLowerCase();
+  const byExt = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    svg: "image/svg+xml",
+    bmp: "image/bmp",
+    tiff: "image/tiff",
+    heic: "image/heic",
+    heif: "image/heif",
+    avif: "image/avif",
+    txt: "text/plain",
+    csv: "text/csv",
+    doc: "application/msword",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    xls: "application/vnd.ms-excel",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  };
+  if (byExt[ext]) return byExt[ext];
+  const header = response.headers.get("content-type");
+  if (header && !header.includes("application/octet-stream")) return header;
+  return "application/octet-stream";
+}
+
 const STATUSES = [
   "identity",
   "contact_established",
@@ -28,9 +56,7 @@ const STATUSES = [
 function leadWithDocumentUrls(lead) {
   const obj = lead.toObject ? lead.toObject() : { ...lead };
   if (obj.documents?.length) {
-    obj.documents = obj.documents.map((doc) =>
-      mapDocumentForClient(doc, obj._id)
-    );
+    obj.documents = obj.documents.map((doc) => mapDocumentForClient(doc));
   }
   return obj;
 }
@@ -117,9 +143,7 @@ router.get("/:id/documents/:docId/file", async (req, res) => {
       });
     }
 
-    const contentType = isPdfDocument(doc)
-      ? "application/pdf"
-      : response.headers.get("content-type") || "application/octet-stream";
+    const contentType = guessDocumentContentType(doc, response);
     res.setHeader("Content-Type", contentType);
     res.setHeader(
       "Content-Disposition",
@@ -150,7 +174,7 @@ router.post("/:id/documents", (req, res, next) => {
     if (!req.file) {
       return res.status(400).json({
         message:
-          "No file uploaded. Use a photo (JPG, PNG, WEBP, HEIC, etc.) or PDF.",
+          "No file uploaded. Use images, PDF, Office docs, text, or ZIP.",
       });
     }
 

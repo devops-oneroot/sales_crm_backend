@@ -1,43 +1,49 @@
 const multer = require("multer");
 
-const ALLOWED_MIME_TYPES = new Set([
-  "application/pdf",
-  "image/jpeg",
-  "image/jpg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-  "image/bmp",
-  "image/tiff",
-  "image/svg+xml",
-  "image/heic",
-  "image/heif",
-  "image/avif",
-  "image/x-icon",
-  "image/vnd.microsoft.icon",
+const BLOCKED_MIME = new Set([
+  "application/x-msdownload",
+  "application/x-msdos-program",
+  "application/x-sh",
+  "application/x-bat",
+  "application/vnd.microsoft.portable-executable",
+]);
+
+const ALLOWED_EXT = new Set([
+  "pdf",
+  "jpg",
+  "jpeg",
+  "png",
+  "gif",
+  "webp",
+  "bmp",
+  "tiff",
+  "tif",
+  "svg",
+  "heic",
+  "heif",
+  "avif",
+  "ico",
+  "txt",
+  "csv",
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
+  "zip",
 ]);
 
 function isAllowedUpload(mimetype, originalname) {
-  if (mimetype && ALLOWED_MIME_TYPES.has(mimetype)) return true;
+  if (mimetype && BLOCKED_MIME.has(mimetype)) return false;
   if (mimetype?.startsWith("image/")) return true;
+  if (mimetype === "application/pdf") return true;
+  if (mimetype?.startsWith("text/")) return true;
+  if (mimetype?.startsWith("application/vnd.")) return true;
+  if (mimetype?.startsWith("application/msword")) return true;
+  if (mimetype === "application/zip") return true;
   const ext = originalname?.split(".").pop()?.toLowerCase();
-  const allowedExt = [
-    "pdf",
-    "jpg",
-    "jpeg",
-    "png",
-    "gif",
-    "webp",
-    "bmp",
-    "tiff",
-    "tif",
-    "svg",
-    "heic",
-    "heif",
-    "avif",
-    "ico",
-  ];
-  return ext ? allowedExt.includes(ext) : false;
+  return ext ? ALLOWED_EXT.has(ext) : true;
 }
 
 const upload = multer({
@@ -49,7 +55,7 @@ const upload = multer({
     } else {
       cb(
         new Error(
-          "Only photos (JPG, PNG, GIF, WEBP, HEIC, etc.) and PDF files are allowed"
+          "File type not allowed. Upload images, PDF, Office docs, text, or ZIP (max 20 MB)."
         )
       );
     }

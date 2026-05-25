@@ -104,8 +104,18 @@ function getUploadOptions(file, leadId) {
     };
   }
 
+  if (file.mimetype?.startsWith("image/")) {
+    return {
+      resource_type: "image",
+      folder: "sales-crm/leads",
+      public_id: baseId,
+      type: "upload",
+      access_mode: "public",
+    };
+  }
+
   return {
-    resource_type: "image",
+    resource_type: "raw",
     folder: "sales-crm/leads",
     public_id: baseId,
     type: "upload",
@@ -175,17 +185,14 @@ function isCloudinaryUrl(url) {
   return typeof url === "string" && /res\.cloudinary\.com/i.test(url);
 }
 
-/** Use secure_url from upload; viewUrl streams via backend (works for all PDFs). */
-function mapDocumentForClient(doc, leadId) {
+/** Use secure_url from upload (frontend opens via Cloudinary or API proxy). */
+function mapDocumentForClient(doc) {
   const d = doc.toObject ? doc.toObject() : { ...doc };
-  const viewUrl =
-    leadId && d._id ? buildDocumentServeUrl(leadId, d._id) : undefined;
 
   if (d.url && isCloudinaryUrl(d.url)) {
     return {
       ...d,
       url: d.url,
-      viewUrl,
       downloadUrl: attachmentUrl(d.url),
     };
   }
@@ -195,12 +202,11 @@ function mapDocumentForClient(doc, leadId) {
     return {
       ...d,
       url,
-      viewUrl,
       downloadUrl: buildDeliveryUrl({ ...d, url }),
     };
   }
 
-  return { ...d, viewUrl };
+  return d;
 }
 
 async function fetchDocumentResponse(doc) {

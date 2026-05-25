@@ -161,6 +161,21 @@ function buildDocumentServeUrl(leadId, docId) {
   return `${getApiBaseUrl()}/api/leads/${leadId}/documents/${docId}/file`;
 }
 
+/** Cloudinary URLs for the frontend (not backend proxy). */
+function mapDocumentForClient(doc) {
+  const d = doc.toObject ? doc.toObject() : { ...doc };
+
+  if (!configureCloudinary() || !d.publicId) {
+    return d;
+  }
+
+  return {
+    ...d,
+    url: buildViewUrl(d),
+    downloadUrl: buildDeliveryUrl(d),
+  };
+}
+
 async function fetchDocumentResponse(doc) {
   const attempts = [];
 
@@ -267,6 +282,7 @@ module.exports = {
   buildDeliveryUrl,
   buildViewUrl,
   buildDocumentServeUrl,
+  mapDocumentForClient,
   fetchDocumentResponse,
   uploadBuffer,
   cloudinary,

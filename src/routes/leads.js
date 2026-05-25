@@ -8,7 +8,7 @@ const {
   isPdfDocument,
   getUploadOptions,
   resolveResourceType,
-  buildDocumentServeUrl,
+  mapDocumentForClient,
   fetchDocumentResponse,
   uploadBuffer,
   cloudinary,
@@ -22,10 +22,7 @@ const STATUSES = ["identity", "contact_established", "in_progress", "deal"];
 function leadWithDocumentUrls(lead) {
   const obj = lead.toObject ? lead.toObject() : { ...lead };
   if (obj.documents?.length) {
-    obj.documents = obj.documents.map((doc) => ({
-      ...doc,
-      url: buildDocumentServeUrl(obj._id, doc._id),
-    }));
+    obj.documents = obj.documents.map((doc) => mapDocumentForClient(doc));
   }
   return obj;
 }

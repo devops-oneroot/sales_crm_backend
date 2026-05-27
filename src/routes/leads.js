@@ -61,8 +61,23 @@ function leadWithDocumentUrls(lead) {
   return obj;
 }
 
+function ownedFilter(userId, extra = {}) {
+  return { ...extra, createdBy: userId };
+}
+
+function leadFilter(req, extra = {}) {
+  if (req.isAdmin) return { ...extra };
+  return ownedFilter(req.userId, extra);
+}
+
+function findAccessibleLead(id, req) {
+  if (req.isAdmin) return Lead.findById(id);
+  return Lead.findOne(ownedFilter(req.userId, { _id: id }));
+}
+
 function normalizeLeadBody(body) {
   const data = { ...body };
+  delete data.createdBy;
   const company = String(data.company || "").trim();
   const contactPerson = String(data.contactPerson || "").trim();
 
@@ -95,8 +110,11 @@ function normalizeLeadBody(body) {
 router.get("/", async (req, res) => {
   try {
     const { status } = req.query;
-    const filter = status && STATUSES.includes(status) ? { status } : {};
-    const leads = await Lead.find(filter).sort({ updatedAt: -1 });
+    const extra =
+      status && STATUSES.includes(status) ? { status } : {};
+    const leads = await Lead.find(leadFilter(req, extra)).sort({
+      updatedAt: -1,
+    });
     res.json(leads.map(leadWithDocumentUrls));
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -105,7 +123,7 @@ router.get("/", async (req, res) => {
 
 router.get("/:id", async (req, res) => {
   try {
-    const lead = await Lead.findById(req.params.id);
+    const lead = await findAccessibleLead(req.params.id, req);
     if (!lead) return res.status(404).json({ message: "Lead not found" });
     res.json(leadWithDocumentUrls(lead));
   } catch (err) {
@@ -115,7 +133,10 @@ router.get("/:id", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    const lead = await Lead.create(normalizeLeadBody(req.body));
+    const lead = await Lead.create({
+      ...normalizeLeadBody(req.body),
+      createdBy: req.userId,
+    });
     res.status(201).json(leadWithDocumentUrls(lead));
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -124,8 +145,8 @@ router.post("/", async (req, res) => {
 
 router.patch("/:id", async (req, res) => {
   try {
-    const lead = await Lead.findByIdAndUpdate(
-      req.params.id,
+    const lead = await Lead.findOneAndUpdate(
+      leadFilter(req, { _id: req.params.id }),
       normalizeLeadBody(req.body),
       {
         new: true,
@@ -145,8 +166,8 @@ router.patch("/:id/status", async (req, res) => {
     if (!STATUSES.includes(status)) {
       return res.status(400).json({ message: "Invalid status" });
     }
-    const lead = await Lead.findByIdAndUpdate(
-      req.params.id,
+    const lead = await Lead.findOneAndUpdate(
+      leadFilter(req, { _id: req.params.id }),
       { status },
       { new: true, runValidators: true }
     );
@@ -163,7 +184,7 @@ router.get("/:id/documents/:docId/file", async (req, res) => {
       return res.status(500).json({ message: "Cloudinary is not configured" });
     }
 
-    const lead = await Lead.findById(req.params.id);
+    const lead = await findAccessibleLead(req.params.id, req);
     if (!lead) return res.status(404).json({ message: "Lead not found" });
 
     const doc = lead.documents.id(req.params.docId);
@@ -226,8 +247,8 @@ router.post("/:id/documents", (req, res, next) => {
       url: result.secure_url,
     };
 
-    const lead = await Lead.findByIdAndUpdate(
-      req.params.id,
+    const lead = await Lead.findOneAndUpdate(
+      leadFilter(req, { _id: req.params.id }),
       { $push: { documents: doc } },
       { new: true, runValidators: true }
     );
@@ -241,7 +262,7 @@ router.post("/:id/documents", (req, res, next) => {
 
 router.delete("/:id/documents/:docId", async (req, res) => {
   try {
-    const lead = await Lead.findById(req.params.id);
+    const lead = await findAccessibleLead(req.params.id, req);
     if (!lead) return res.status(404).json({ message: "Lead not found" });
 
     const doc = lead.documents.id(req.params.docId);
@@ -271,8 +292,8 @@ router.post("/:id/remarks", async (req, res) => {
     if (!text?.trim()) {
       return res.status(400).json({ message: "Remark text is required" });
     }
-    const lead = await Lead.findByIdAndUpdate(
-      req.params.id,
+    const lead = await Lead.findOneAndUpdate(
+      leadFilter(req, { _id: req.params.id }),
       { $push: { remarks: { text: text.trim(), author: author || "" } } },
       { new: true, runValidators: true }
     );
@@ -285,7 +306,9 @@ router.post("/:id/remarks", async (req, res) => {
 
 router.delete("/:id", async (req, res) => {
   try {
-    const lead = await Lead.findByIdAndDelete(req.params.id);
+    const lead = await Lead.findOneAndDelete(
+      leadFilter(req, { _id: req.params.id })
+    );
     if (!lead) return res.status(404).json({ message: "Lead not found" });
     res.json({ message: "Lead deleted" });
   } catch (err) {

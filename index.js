@@ -8,6 +8,8 @@ const express = require("express");
 const cors = require("cors");
 const connectDB = require("./src/config/db");
 const migrateInvalidResponsiblePersons = require("./src/config/migrateTeam");
+const migrateLeadCreators = require("./src/config/migrateLeadCreators");
+const migrateAdmin = require("./src/config/migrateAdmin");
 const {
   configureCloudinary,
   getCloudName,
@@ -54,6 +56,8 @@ async function start() {
 
     await connectDB();
     await migrateInvalidResponsiblePersons();
+    await migrateLeadCreators();
+    await migrateAdmin();
 
     app.listen(PORT, () => {
       console.log(

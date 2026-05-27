@@ -63,6 +63,12 @@ const leadSchema = new mongoose.Schema(
       enum: ["export", "domestic"],
       required: true,
     },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+      immutable: true,
+    },
     responsiblePerson: { type: String, required: true, trim: true },
     followUpDate: { type: Date },
     status: {

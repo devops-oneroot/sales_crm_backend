@@ -1,6 +1,7 @@
 const express = require("express");
 const { Readable } = require("stream");
 const Lead = require("../models/Lead");
+const User = require("../models/User");
 const upload = require("../middleware/upload");
 const {
   isCloudinaryReady,
@@ -133,8 +134,20 @@ router.get("/:id", async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
+    const creator = await User.findById(req.userId).select("name role");
+    const data = normalizeLeadBody(req.body);
+
+    if (creator?.name) {
+      const creatorName = creator.name.trim();
+      if (!req.isAdmin) {
+        data.responsiblePerson = creatorName;
+      } else if (!String(data.responsiblePerson || "").trim()) {
+        data.responsiblePerson = creatorName;
+      }
+    }
+
     const lead = await Lead.create({
-      ...normalizeLeadBody(req.body),
+      ...data,
       createdBy: req.userId,
     });
     res.status(201).json(leadWithDocumentUrls(lead));

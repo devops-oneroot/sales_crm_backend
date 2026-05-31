@@ -323,4 +323,5 @@ module.exports = {
   fetchDocumentResponse,
   uploadBuffer,
   cloudinary,
+  isCloudinaryUrl,
 };

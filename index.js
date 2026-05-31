@@ -17,6 +17,8 @@ const {
 const authRouter = require("./src/routes/auth");
 const { requireAuth } = require("./src/middleware/auth");
 const leadsRouter = require("./src/routes/leads");
+const aggregatorsRouter = require("./src/routes/aggregators");
+const locationsRouter = require("./src/routes/locations");
 const teamRouter = require("./src/routes/team");
 
 const app = express();
@@ -40,6 +42,8 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/leads", requireAuth, leadsRouter);
+app.use("/api/aggregators", requireAuth, aggregatorsRouter);
+app.use("/api/locations", requireAuth, locationsRouter);
 app.use("/api/team", requireAuth, teamRouter);
 
 async function start() {

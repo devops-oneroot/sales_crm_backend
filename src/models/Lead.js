@@ -21,8 +21,34 @@ const documentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+const exportDetailsSchema = new mongoose.Schema(
+  {
+    exportIndustryType: { type: String, trim: true },
+    materialType: { type: String, trim: true },
+    polishLevel: { type: String, trim: true },
+    minCurcumin: { type: Number, min: 0 },
+    acceptGrade: { type: String, trim: true },
+    preferredOrigin: { type: String, trim: true },
+    quantityNeededKg: { type: Number, min: 0 },
+    kgPerBag: { type: Number, min: 0 },
+    maxPrice: { type: Number, min: 0 },
+    paymentDays: { type: Number, min: 0 },
+    deliveryState: { type: String, trim: true },
+    deliveryDistrict: { type: String, trim: true },
+    incoterm: { type: String, trim: true },
+    portDelivery: { type: String, trim: true },
+    paymentDaysAfterSailing: { type: Number, min: 0 },
+  },
+  { _id: false }
+);
+
 const leadSchema = new mongoose.Schema(
   {
+    leadType: {
+      type: String,
+      enum: ["export", "domestic"],
+      default: "domestic",
+    },
     name: { type: String, required: true, trim: true },
     contactPerson: { type: String, trim: true },
     phone: { type: String, trim: true },
@@ -61,8 +87,8 @@ const leadSchema = new mongoose.Schema(
     industry: {
       type: String,
       enum: ["export", "domestic"],
-      required: true,
     },
+    exportDetails: exportDetailsSchema,
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

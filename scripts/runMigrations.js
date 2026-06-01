@@ -9,6 +9,7 @@ const connectDB = require("../src/config/db");
 const migrateInvalidResponsiblePersons = require("../src/config/migrateTeam");
 const migrateLeadCreators = require("../src/config/migrateLeadCreators");
 const migrateAdmin = require("../src/config/migrateAdmin");
+const migrateSuppliers = require("../src/config/migrateSuppliers");
 const Lead = require("../src/models/Lead");
 
 async function runMigrations() {
@@ -22,6 +23,9 @@ async function runMigrations() {
 
   console.log("Running migrateAdmin...");
   await migrateAdmin();
+
+  console.log("Running migrateSuppliers...");
+  await migrateSuppliers();
 
   const total = await Lead.countDocuments();
   const missing = await Lead.countDocuments({

@@ -10,6 +10,7 @@ const connectDB = require("./src/config/db");
 const migrateInvalidResponsiblePersons = require("./src/config/migrateTeam");
 const migrateLeadCreators = require("./src/config/migrateLeadCreators");
 const migrateAdmin = require("./src/config/migrateAdmin");
+const migrateSuppliers = require("./src/config/migrateSuppliers");
 const {
   configureCloudinary,
   getCloudName,
@@ -17,9 +18,10 @@ const {
 const authRouter = require("./src/routes/auth");
 const { requireAuth } = require("./src/middleware/auth");
 const leadsRouter = require("./src/routes/leads");
-const aggregatorsRouter = require("./src/routes/aggregators");
 const locationsRouter = require("./src/routes/locations");
 const teamRouter = require("./src/routes/team");
+const suppliersRouter = require("./src/routes/suppliers");
+const matchRouter = require("./src/routes/match");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -42,9 +44,10 @@ app.get("/api/health", (_req, res) => {
 
 app.use("/api/auth", authRouter);
 app.use("/api/leads", requireAuth, leadsRouter);
-app.use("/api/aggregators", requireAuth, aggregatorsRouter);
 app.use("/api/locations", requireAuth, locationsRouter);
 app.use("/api/team", requireAuth, teamRouter);
+app.use("/api/suppliers", requireAuth, suppliersRouter);
+app.use("/api/match", requireAuth, matchRouter);
 
 async function start() {
   try {
@@ -62,6 +65,7 @@ async function start() {
     await migrateInvalidResponsiblePersons();
     await migrateLeadCreators();
     await migrateAdmin();
+    await migrateSuppliers();
 
     app.listen(PORT, () => {
       console.log(

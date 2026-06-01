@@ -66,9 +66,14 @@ function ownedFilter(userId, extra = {}) {
   return { ...extra, createdBy: userId };
 }
 
+function notSupplierClause() {
+  return { leadType: { $in: ["export", "domestic"] } };
+}
+
 function leadFilter(req, extra = {}) {
-  if (req.isAdmin) return { ...extra };
-  return ownedFilter(req.userId, extra);
+  const base = { ...notSupplierClause(), ...extra };
+  if (req.isAdmin) return base;
+  return ownedFilter(req.userId, base);
 }
 
 function findAccessibleLead(id, req) {
@@ -84,6 +89,14 @@ function normalizeLeadBody(body) {
 
   if (!data.name?.trim()) {
     data.name = company || contactPerson || "—";
+  }
+
+  if (data.leadType === "export") {
+    data.industry = "export";
+  } else if (data.leadType === "domestic") {
+    data.industry = data.industry || "domestic";
+  } else if (!data.industry) {
+    data.industry = "domestic";
   }
 
   if (Array.isArray(data.products) && data.products.length) {
@@ -103,6 +116,21 @@ function normalizeLeadBody(body) {
       quantity: data.product.quantity ?? 0,
       price: data.product.price ?? 0,
     }));
+  }
+
+  if (
+    data.leadType !== "supplier" &&
+    data.exportDetails &&
+    (data.exportDetails.maxPrice == null ||
+      data.exportDetails.maxPrice === "" ||
+      Number(data.exportDetails.maxPrice) <= 0)
+  ) {
+    const productPrice = Number(
+      data.product?.price ?? data.products?.[0]?.price
+    );
+    if (Number.isFinite(productPrice) && productPrice > 0) {
+      data.exportDetails.maxPrice = productPrice;
+    }
   }
 
   return data;

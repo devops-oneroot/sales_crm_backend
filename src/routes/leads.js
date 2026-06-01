@@ -16,6 +16,8 @@ const {
   configureCloudinary,
 } = require("../config/cloudinary");
 
+const { leadFilterForRequest } = require("../lib/leadQuery");
+
 const router = express.Router();
 
 function guessDocumentContentType(doc, response) {
@@ -62,23 +64,12 @@ function leadWithDocumentUrls(lead) {
   return obj;
 }
 
-function ownedFilter(userId, extra = {}) {
-  return { ...extra, createdBy: userId };
-}
-
-function notSupplierClause() {
-  return { leadType: { $in: ["export", "domestic"] } };
-}
-
 function leadFilter(req, extra = {}) {
-  const base = { ...notSupplierClause(), ...extra };
-  if (req.isAdmin) return base;
-  return ownedFilter(req.userId, base);
+  return leadFilterForRequest(req, extra);
 }
 
 function findAccessibleLead(id, req) {
-  if (req.isAdmin) return Lead.findById(id);
-  return Lead.findOne(ownedFilter(req.userId, { _id: id }));
+  return Lead.findOne(leadFilter(req, { _id: id }));
 }
 
 function normalizeLeadBody(body) {

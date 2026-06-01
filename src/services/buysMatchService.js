@@ -1,6 +1,7 @@
 const Lead = require("../models/Lead");
 const Supplier = require("../models/Supplier");
 const { extractSupplierForMatch } = require("../lib/supplierAdapter");
+const { buyerLeadClause } = require("../lib/leadQuery");
 
 const WEIGHTS = {
   polish: 30,
@@ -9,8 +10,6 @@ const WEIGHTS = {
   price: 15,
   origin: 10,
 };
-
-const BUYER_TYPES = ["export", "domestic"];
 
 function normalize(value) {
   return String(value ?? "")
@@ -180,7 +179,7 @@ function supplierFilter() {
 }
 
 function buyerFilter() {
-  return { leadType: { $in: BUYER_TYPES } };
+  return buyerLeadClause();
 }
 
 async function getMatches(req, options = {}) {

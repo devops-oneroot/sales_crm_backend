@@ -23,12 +23,13 @@ async function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, getJwtSecret());
-    const user = await User.findById(payload.sub).select("role");
+    const user = await User.findById(payload.sub).select("role name");
     if (!user) {
       return res.status(401).json({ message: "User not found" });
     }
     req.userId = payload.sub;
     req.userRole = user.role || "sales";
+    req.userName = user.name?.trim() || "";
     req.isAdmin = req.userRole === "admin";
     next();
   } catch {

@@ -11,6 +11,7 @@ const migrateInvalidResponsiblePersons = require("./src/config/migrateTeam");
 const migrateLeadCreators = require("./src/config/migrateLeadCreators");
 const migrateAdmin = require("./src/config/migrateAdmin");
 const migrateSuppliers = require("./src/config/migrateSuppliers");
+const migrateLeadTypes = require("./src/config/migrateLeadTypes");
 const {
   configureCloudinary,
   getCloudName,
@@ -66,6 +67,7 @@ async function start() {
     await migrateLeadCreators();
     await migrateAdmin();
     await migrateSuppliers();
+    await migrateLeadTypes();
 
     app.listen(PORT, () => {
       console.log(

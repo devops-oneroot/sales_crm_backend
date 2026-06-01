@@ -1,16 +1,7 @@
 const Lead = require("../models/Lead");
 const Supplier = require("../models/Supplier");
 const { leadRowToSupplierFields } = require("../lib/supplierAdapter");
-
-const legacySupplierLeadFilter = {
-  $or: [
-    { leadType: "supplier" },
-    {
-      leadType: { $exists: false },
-      "supplierDetails.supplierName": { $exists: true, $ne: "" },
-    },
-  ],
-};
+const { legacySupplierLeadFilter } = require("../lib/leadQuery");
 
 /**
  * Move supplier rows from `leads` collection into `suppliers` collection.

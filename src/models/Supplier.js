@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const supplierSchema = new mongoose.Schema(
   {
     supplierName: { type: String, required: true, trim: true },
+    supplierNumber: { type: String, required: true, trim: true },
     supplierType: { type: String, trim: true },
     materialType: { type: String, trim: true },
     polishLevel: { type: String, trim: true },

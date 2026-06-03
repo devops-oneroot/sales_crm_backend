@@ -208,6 +208,7 @@ async function getMatches(req, options = {}) {
       supplierId: supplier.id,
       supplierName: supplier.name,
       supplierDetails: {
+        supplierNumber: supplier.supplierNumber,
         polishLevel: supplier.polishLevel,
         materialType: supplier.materialType,
         curcuminPercent: supplier.curcuminPercent,

@@ -5,9 +5,13 @@ function pickSupplierFields(body) {
   const supplierName = String(
     sd.supplierName || body.supplierName || body.name || ""
   ).trim();
+  const supplierNumber = String(
+    sd.supplierNumber || body.supplierNumber || ""
+  ).trim();
 
   return {
     supplierName: supplierName || "—",
+    supplierNumber,
     supplierType: sd.supplierType || body.supplierType,
     materialType: sd.materialType || body.materialType,
     polishLevel: sd.polishLevel || body.polishLevel,
@@ -36,6 +40,7 @@ function supplierDocToDetails(doc) {
   const o = doc.toObject ? doc.toObject() : doc;
   return {
     supplierName: o.supplierName,
+    supplierNumber: o.supplierNumber,
     supplierType: o.supplierType,
     materialType: o.materialType,
     polishLevel: o.polishLevel,
@@ -97,9 +102,13 @@ function leadRowToSupplierFields(lead) {
   const supplierName = String(
     sd.supplierName || lead.name || lead.company || ""
   ).trim();
+  const supplierNumber = String(
+    sd.supplierNumber || lead.phone || ""
+  ).trim();
 
   return {
     supplierName: supplierName || "—",
+    supplierNumber: supplierNumber || "—",
     supplierType: sd.supplierType,
     materialType: sd.materialType,
     polishLevel: sd.polishLevel,
@@ -129,6 +138,7 @@ function extractSupplierForMatch(doc) {
   return {
     id: String(o._id),
     name: o.supplierName?.trim() || "Unnamed supplier",
+    supplierNumber: o.supplierNumber,
     polishLevel: o.polishLevel,
     materialType: o.materialType,
     curcuminPercent: o.curcuminPercent,

@@ -23,6 +23,7 @@ const locationsRouter = require("./src/routes/locations");
 const teamRouter = require("./src/routes/team");
 const suppliersRouter = require("./src/routes/suppliers");
 const matchRouter = require("./src/routes/match");
+const activityRouter = require("./src/routes/activity");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -49,6 +50,7 @@ app.use("/api/locations", requireAuth, locationsRouter);
 app.use("/api/team", requireAuth, teamRouter);
 app.use("/api/suppliers", requireAuth, suppliersRouter);
 app.use("/api/match", requireAuth, matchRouter);
+app.use("/api/activity", requireAuth, activityRouter);
 
 async function start() {
   try {

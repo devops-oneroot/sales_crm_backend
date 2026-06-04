@@ -17,6 +17,8 @@ const {
 } = require("../config/cloudinary");
 
 const { leadFilterForRequest } = require("../lib/leadQuery");
+const { logActivity } = require("../lib/logActivity");
+const autoSaveToday = require("../lib/autoSaveToday");
 
 const router = express.Router();
 
@@ -169,6 +171,14 @@ router.post("/", async (req, res) => {
       ...data,
       createdBy: req.userId,
     });
+    await logActivity({
+      type: "lead_created",
+      userId: req.userId,
+      userName: req.userName || creator?.name,
+      lead,
+      toStatus: lead.status,
+    });
+    await autoSaveToday(req);
     res.status(201).json(leadWithDocumentUrls(lead));
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -186,6 +196,7 @@ router.patch("/:id", async (req, res) => {
       }
     );
     if (!lead) return res.status(404).json({ message: "Lead not found" });
+    await autoSaveToday(req);
     res.json(leadWithDocumentUrls(lead));
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -198,12 +209,27 @@ router.patch("/:id/status", async (req, res) => {
     if (!STATUSES.includes(status)) {
       return res.status(400).json({ message: "Invalid status" });
     }
+    const existing = await Lead.findOne(
+      leadFilter(req, { _id: req.params.id })
+    );
+    if (!existing) return res.status(404).json({ message: "Lead not found" });
+
     const lead = await Lead.findOneAndUpdate(
       leadFilter(req, { _id: req.params.id }),
       { status },
       { new: true, runValidators: true }
     );
-    if (!lead) return res.status(404).json({ message: "Lead not found" });
+    if (existing.status !== status) {
+      await logActivity({
+        type: "status_changed",
+        userId: req.userId,
+        userName: req.userName,
+        lead,
+        fromStatus: existing.status,
+        toStatus: status,
+      });
+    }
+    await autoSaveToday(req);
     res.json(leadWithDocumentUrls(lead));
   } catch (err) {
     res.status(400).json({ message: err.message });
@@ -324,12 +350,18 @@ router.post("/:id/remarks", async (req, res) => {
     if (!text?.trim()) {
       return res.status(400).json({ message: "Remark text is required" });
     }
+    const remarkAuthor = String(author || req.userName || "").trim();
     const lead = await Lead.findOneAndUpdate(
       leadFilter(req, { _id: req.params.id }),
-      { $push: { remarks: { text: text.trim(), author: author || "" } } },
+      {
+        $push: {
+          remarks: { text: text.trim(), author: remarkAuthor },
+        },
+      },
       { new: true, runValidators: true }
     );
     if (!lead) return res.status(404).json({ message: "Lead not found" });
+    await autoSaveToday(req);
     res.json(leadWithDocumentUrls(lead));
   } catch (err) {
     res.status(400).json({ message: err.message });

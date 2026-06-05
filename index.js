@@ -24,6 +24,7 @@ const teamRouter = require("./src/routes/team");
 const suppliersRouter = require("./src/routes/suppliers");
 const matchRouter = require("./src/routes/match");
 const activityRouter = require("./src/routes/activity");
+const dailyPricesRouter = require("./src/routes/dailyPrices");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -51,6 +52,7 @@ app.use("/api/team", requireAuth, teamRouter);
 app.use("/api/suppliers", requireAuth, suppliersRouter);
 app.use("/api/match", requireAuth, matchRouter);
 app.use("/api/activity", requireAuth, activityRouter);
+app.use("/api/daily-prices", requireAuth, dailyPricesRouter);
 
 async function start() {
   try {

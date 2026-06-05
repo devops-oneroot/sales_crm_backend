@@ -27,6 +27,8 @@ const exportDetailsSchema = new mongoose.Schema(
     materialType: { type: String, trim: true },
     polishLevel: { type: String, trim: true },
     minCurcumin: { type: Number, min: 0 },
+    moistureLevel: { type: Number, min: 0 },
+    minOilContent: { type: Number, min: 0 },
     acceptGrade: { type: String, trim: true },
     preferredOrigin: { type: String, trim: true },
     quantityNeededKg: { type: Number, min: 0 },

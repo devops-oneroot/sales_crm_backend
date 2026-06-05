@@ -173,6 +173,71 @@ function computeMatch(supplier, buyer) {
   };
 }
 
+function buildSupplierMatchEntry(supplier, match) {
+  return {
+    supplierId: supplier.id,
+    supplierName: supplier.name,
+    supplierDetails: {
+      supplierNumber: supplier.supplierNumber,
+      polishLevel: supplier.polishLevel,
+      materialType: supplier.materialType,
+      curcuminPercent: supplier.curcuminPercent,
+      price: supplier.price,
+      region: supplier.region,
+      variety: supplier.variety,
+      grade: supplier.grade,
+      quantityKg: supplier.quantityKg,
+    },
+    leadId: match.leadId,
+    leadName: match.leadName,
+    leadType: match.leadType,
+    leadStatus: match.leadStatus,
+    responsiblePerson: match.responsiblePerson,
+    matchScore: match.matchScore,
+    matchedFields: match.matchedFields,
+    unmatchedFields: match.unmatchedFields,
+    breakdown: match.breakdown,
+    supplierSnapshot: match.supplierSnapshot,
+    leadSnapshot: match.leadSnapshot,
+  };
+}
+
+function buildLeadRow(buyer, suppliers, minScore, limitMatches = 15) {
+  const allMatches = suppliers
+    .map((supplier) => ({
+      supplier,
+      match: computeMatch(supplier, buyer),
+    }))
+    .sort((a, b) => b.match.matchScore - a.match.matchScore);
+
+  const qualifying = allMatches.filter((m) => m.match.matchScore >= minScore);
+  const bestEntry = qualifying[0];
+
+  return {
+    leadId: buyer.id,
+    leadName: buyer.name,
+    leadType: buyer.leadType,
+    leadStatus: buyer.status,
+    responsiblePerson: buyer.responsiblePerson,
+    leadDetails: {
+      polishLevel: buyer.polishLevel,
+      materialType: buyer.materialType,
+      minCurcumin: buyer.minCurcumin,
+      maxPrice: buyer.maxPrice,
+      preferredOrigin: buyer.preferredOrigin || buyer.sourcingRegion,
+      acceptGrade: buyer.acceptGrade,
+      quantityNeededKg: buyer.quantityNeededKg,
+    },
+    matchCount: qualifying.length,
+    bestMatch: bestEntry
+      ? buildSupplierMatchEntry(bestEntry.supplier, bestEntry.match)
+      : null,
+    matches: qualifying
+      .slice(0, limitMatches)
+      .map((entry) => buildSupplierMatchEntry(entry.supplier, entry.match)),
+  };
+}
+
 /** All users match against the full supplier and lead pools. */
 function supplierFilter() {
   return {};
@@ -253,4 +318,69 @@ async function getMatches(req, options = {}) {
   };
 }
 
-module.exports = { getMatches, WEIGHTS };
+async function getLeadMatches(req, options = {}) {
+  const minScore = Number(options.minScore) || 0;
+  const page = Math.max(1, Number(options.page) || 1);
+  const pageSize = Math.min(
+    50,
+    Math.max(1, Number(options.pageSize) || 10)
+  );
+  const limitMatches = Math.min(
+    50,
+    Math.max(1, Number(options.limit) || 15)
+  );
+
+  const [supplierDocs, buyerDocs] = await Promise.all([
+    Supplier.find(supplierFilter()).sort({ updatedAt: -1 }).lean(),
+    Lead.find(buyerFilter()).sort({ updatedAt: -1 }).lean(),
+  ]);
+
+  const suppliers = supplierDocs.map(extractSupplierForMatch);
+  const buyers = buyerDocs.map(extractBuyer);
+
+  const allRows = buyers
+    .map((buyer) => buildLeadRow(buyer, suppliers, minScore, limitMatches))
+    .sort((a, b) => {
+      const scoreA = a.bestMatch?.matchScore ?? -1;
+      const scoreB = b.bestMatch?.matchScore ?? -1;
+      if (scoreB !== scoreA) return scoreB - scoreA;
+      return a.leadName.localeCompare(b.leadName);
+    });
+
+  const total = allRows.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const start = (safePage - 1) * pageSize;
+  const leads = allRows.slice(start, start + pageSize);
+
+  const withMatches = allRows.filter((row) => row.bestMatch);
+  const topScores = withMatches
+    .map((row) => row.bestMatch?.matchScore ?? 0)
+    .filter((score) => score > 0);
+
+  return {
+    leads,
+    pagination: {
+      page: safePage,
+      pageSize,
+      total,
+      totalPages,
+    },
+    summary: {
+      supplierCount: suppliers.length,
+      buyerCount: buyers.length,
+      leadsWithMatches: withMatches.length,
+      leadsWithoutMatches: total - withMatches.length,
+      avgBestScore: topScores.length
+        ? Number(
+            (
+              topScores.reduce((sum, score) => sum + score, 0) /
+              topScores.length
+            ).toFixed(1)
+          )
+        : 0,
+    },
+  };
+}
+
+module.exports = { getMatches, getLeadMatches, WEIGHTS };

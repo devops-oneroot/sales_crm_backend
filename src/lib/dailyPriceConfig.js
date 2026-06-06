@@ -16,8 +16,8 @@ const LOCATIONS = [
 ];
 
 const FARMING_METHODS = [
-  { id: "ipm", label: "IPM price" },
   { id: "conventional", label: "Conventional price" },
+  { id: "ipm", label: "IPM price" },
   { id: "organic", label: "Organic price" },
 ];
 

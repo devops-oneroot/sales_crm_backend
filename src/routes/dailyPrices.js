@@ -8,12 +8,35 @@ const {
   hasAnyPrice,
   hasAnyPriceInMethod,
 } = require("../lib/dailyPriceConfig");
+const {
+  toClientPriceMeta,
+  buildMetaForAllPrices,
+  mergePriceMetaOnUpdate,
+  isValidMethodId,
+  isValidLocationId,
+  locationHasAnyPrice,
+} = require("../lib/dailyPriceMeta");
 
 function normalizePricesForClient(raw) {
   return normalizePricesBody(raw);
 }
 
 const router = express.Router();
+
+const DAILY_PRICE_APPROVER_NAME = "Deelep sir";
+
+async function resolveApproverUserId() {
+  const deelep = await User.findOne({
+    name: { $regex: /deelep/i },
+    role: "admin",
+  })
+    .select("_id")
+    .lean();
+  if (deelep?._id) return deelep._id;
+
+  const admin = await User.findOne({ role: "admin" }).select("_id").lean();
+  return admin?._id || null;
+}
 
 function toClient(doc) {
   const o = doc.toObject ? doc.toObject() : doc;
@@ -25,6 +48,7 @@ function toClient(doc) {
     updatedBy: o.updatedBy ? String(o.updatedBy) : undefined,
     updatedByName: o.updatedByName || o.addedByName,
     prices: normalizePricesForClient(o.prices),
+    priceMeta: toClientPriceMeta(o.priceMeta),
     createdAt: o.createdAt,
     updatedAt: o.updatedAt,
   };
@@ -80,6 +104,7 @@ router.post("/", async (req, res) => {
       updatedBy: req.userId,
       updatedByName: userName,
       prices,
+      priceMeta: buildMetaForAllPrices(prices, req.userId, userName),
     });
 
     res.status(201).json(toClient(entry));
@@ -125,11 +150,116 @@ router.patch("/:id", async (req, res) => {
       }
 
       updates.prices = merged;
+      updates.priceMeta = mergePriceMetaOnUpdate(
+        existing.priceMeta,
+        existing.prices,
+        merged,
+        req.body.prices,
+        req.userId,
+        editorName
+      );
     }
 
     const entry = await DailyPrice.findByIdAndUpdate(
       req.params.id,
       updates,
+      { new: true, runValidators: true }
+    );
+
+    res.json(toClient(entry));
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post("/:id/approve", async (req, res) => {
+  try {
+    const method = String(req.body.method || "").trim();
+    const location = String(req.body.location || "").trim();
+
+    if (!isValidMethodId(method) || !isValidLocationId(location)) {
+      return res.status(400).json({
+        message: "Invalid farming method or location",
+      });
+    }
+
+    const existing = await DailyPrice.findById(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ message: "Daily price entry not found" });
+    }
+
+    const prices = normalizePricesBody(existing.prices);
+    if (!locationHasAnyPrice(prices[method], location)) {
+      return res.status(400).json({
+        message: "No prices to approve for this location",
+      });
+    }
+
+    const approverId = (await resolveApproverUserId()) || req.userId;
+
+    const entry = await DailyPrice.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: {
+          [`priceMeta.${method}.${location}.approved`]: true,
+          [`priceMeta.${method}.${location}.approvedBy`]: approverId,
+          [`priceMeta.${method}.${location}.approvedByName`]: DAILY_PRICE_APPROVER_NAME,
+          [`priceMeta.${method}.${location}.approvedAt`]: new Date(),
+          [`priceMeta.${method}.${location}.rejected`]: false,
+          [`priceMeta.${method}.${location}.rejectedBy`]: null,
+          [`priceMeta.${method}.${location}.rejectedByName`]: "",
+          [`priceMeta.${method}.${location}.rejectedAt`]: null,
+        },
+      },
+      { new: true, runValidators: true }
+    );
+
+    res.json(toClient(entry));
+  } catch (err) {
+    res.status(400).json({ message: err.message });
+  }
+});
+
+router.post("/:id/reject", async (req, res) => {
+  try {
+    const method = String(req.body.method || "").trim();
+    const location = String(req.body.location || "").trim();
+
+    if (!isValidMethodId(method) || !isValidLocationId(location)) {
+      return res.status(400).json({
+        message: "Invalid farming method or location",
+      });
+    }
+
+    const existing = await DailyPrice.findById(req.params.id);
+    if (!existing) {
+      return res.status(404).json({ message: "Daily price entry not found" });
+    }
+
+    const prices = normalizePricesBody(existing.prices);
+    if (!locationHasAnyPrice(prices[method], location)) {
+      return res.status(400).json({
+        message: "No prices to reject for this location",
+      });
+    }
+
+    const editor = await User.findById(req.userId).select("name");
+    const editorName = editor?.name?.trim() || req.userName || "Admin";
+
+    const entry = await DailyPrice.findByIdAndUpdate(
+      req.params.id,
+      {
+        $set: {
+          [`priceMeta.${method}.${location}.rejected`]: true,
+          [`priceMeta.${method}.${location}.rejectedBy`]: req.userId,
+          [`priceMeta.${method}.${location}.rejectedByName`]: editorName,
+          [`priceMeta.${method}.${location}.rejectedAt`]: new Date(),
+          [`priceMeta.${method}.${location}.approved`]: false,
+          [`priceMeta.${method}.${location}.approvedBy`]: null,
+          [`priceMeta.${method}.${location}.approvedByName`]: "",
+          [`priceMeta.${method}.${location}.approvedAt`]: null,
+        },
+      },
       { new: true, runValidators: true }
     );
 

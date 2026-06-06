@@ -32,6 +32,44 @@ const pricesByMethodSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const locationMetaSchema = new mongoose.Schema(
+  {
+    addedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    addedByName: { type: String, trim: true, default: "" },
+    updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    updatedByName: { type: String, trim: true, default: "" },
+    approved: { type: Boolean, default: false },
+    approvedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    approvedByName: { type: String, trim: true, default: "" },
+    approvedAt: { type: Date },
+    rejected: { type: Boolean, default: false },
+    rejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+    rejectedByName: { type: String, trim: true, default: "" },
+    rejectedAt: { type: Date },
+  },
+  { _id: false }
+);
+
+const methodMetaSchema = new mongoose.Schema(
+  {
+    gundlupete: { type: locationMetaSchema, default: () => ({}) },
+    erode: { type: locationMetaSchema, default: () => ({}) },
+    salem: { type: locationMetaSchema, default: () => ({}) },
+    sangli: { type: locationMetaSchema, default: () => ({}) },
+    nizamabad: { type: locationMetaSchema, default: () => ({}) },
+  },
+  { _id: false }
+);
+
+const priceMetaByMethodSchema = new mongoose.Schema(
+  {
+    ipm: { type: methodMetaSchema, default: () => ({}) },
+    conventional: { type: methodMetaSchema, default: () => ({}) },
+    organic: { type: methodMetaSchema, default: () => ({}) },
+  },
+  { _id: false }
+);
+
 const dailyPriceSchema = new mongoose.Schema(
   {
     date: { type: String, required: true, trim: true },
@@ -48,6 +86,7 @@ const dailyPriceSchema = new mongoose.Schema(
     },
     updatedByName: { type: String, trim: true },
     prices: { type: pricesByMethodSchema, default: () => ({}) },
+    priceMeta: { type: priceMetaByMethodSchema, default: () => ({}) },
   },
   { timestamps: true }
 );

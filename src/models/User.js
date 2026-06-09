@@ -10,6 +10,11 @@ const userSchema = new mongoose.Schema(
       enum: ["sales", "admin"],
       default: "sales",
     },
+    adminScope: {
+      type: String,
+      enum: ["all", "export"],
+      default: "all",
+    },
   },
   { timestamps: true }
 );
@@ -20,6 +25,7 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     name: this.name,
     phone: this.phone,
     role: this.role || "sales",
+    adminScope: this.role === "admin" ? this.adminScope || "all" : undefined,
   };
 };
 

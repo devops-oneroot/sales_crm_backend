@@ -23,7 +23,7 @@ async function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, getJwtSecret());
-    const user = await User.findById(payload.sub).select("role name");
+    const user = await User.findById(payload.sub).select("role name adminScope");
     if (!user) {
       return res.status(401).json({ message: "User not found" });
     }
@@ -31,6 +31,8 @@ async function requireAuth(req, res, next) {
     req.userRole = user.role || "sales";
     req.userName = user.name?.trim() || "";
     req.isAdmin = req.userRole === "admin";
+    req.adminScope =
+      req.isAdmin && user.adminScope === "export" ? "export" : "all";
     next();
   } catch {
     return res.status(401).json({ message: "Invalid or expired token" });

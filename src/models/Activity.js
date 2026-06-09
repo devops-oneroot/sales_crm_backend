@@ -4,7 +4,12 @@ const activitySchema = new mongoose.Schema(
   {
     type: {
       type: String,
-      enum: ["lead_created", "status_changed", "remark_added"],
+      enum: [
+        "lead_created",
+        "status_changed",
+        "remark_added",
+        "daily_activity",
+      ],
       required: true,
     },
     userId: {
@@ -24,6 +29,7 @@ const activitySchema = new mongoose.Schema(
     fromStatus: { type: String, trim: true },
     toStatus: { type: String, trim: true },
     remarkText: { type: String, trim: true },
+    dailyActivityType: { type: String, trim: true },
   },
   { timestamps: true, collection: "activities" }
 );

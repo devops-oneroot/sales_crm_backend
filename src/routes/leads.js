@@ -16,7 +16,10 @@ const {
   configureCloudinary,
 } = require("../config/cloudinary");
 
-const { leadFilterForRequest } = require("../lib/leadQuery");
+const { enforceExportLeadBody } = require("../lib/adminScope");
+const { todayBusinessDate } = require("../lib/businessDate");
+const { companyNamesMatch } = require("../lib/companyNameNormalize");
+const { leadFilterForRequest, buyerLeadClause } = require("../lib/leadQuery");
 const { logActivity } = require("../lib/logActivity");
 const autoSaveToday = require("../lib/autoSaveToday");
 
@@ -74,11 +77,58 @@ function findAccessibleLead(id, req) {
   return Lead.findOne(leadFilter(req, { _id: id }));
 }
 
+function normalizeStringList(value, legacySingle) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+  const single = String(legacySingle || "").trim();
+  return single ? [single] : [];
+}
+
+function normalizeContactsList(contacts) {
+  if (!Array.isArray(contacts)) return [];
+  return contacts
+    .map((c) => ({
+      name: String(c?.name || "").trim(),
+      phone: String(c?.phone || "").trim(),
+      email: String(c?.email || "").trim().toLowerCase(),
+      designation: String(c?.designation || "").trim(),
+    }))
+    .filter((c) => c.name || c.phone || c.email || c.designation);
+}
+
 function normalizeLeadBody(body) {
   const data = { ...body };
   delete data.createdBy;
   const company = String(data.company || "").trim();
-  const contactPerson = String(data.contactPerson || "").trim();
+
+  let contacts = normalizeContactsList(data.contacts);
+  if (!contacts.length) {
+    const contactPersons = normalizeStringList(
+      data.contactPersons,
+      data.contactPerson
+    );
+    const emails = normalizeStringList(data.emails, data.email);
+    const count = Math.max(contactPersons.length, emails.length, 1);
+    contacts = Array.from({ length: count }, (_, i) => ({
+      name: contactPersons[i] || "",
+      phone: i === 0 ? String(data.phone || "").trim() : "",
+      email: emails[i] || "",
+      designation: i === 0 ? String(data.designation || "").trim() : "",
+    })).filter((c) => c.name || c.phone || c.email || c.designation);
+  }
+
+  const contactPersons = contacts.map((c) => c.name).filter(Boolean);
+  const emails = contacts.map((c) => c.email).filter(Boolean);
+  const contactPerson = contactPersons[0] || "";
+
+  data.contacts = contacts;
+  data.contactPersons = contactPersons;
+  data.emails = emails;
+  data.contactPerson = contactPerson;
+  data.email = emails[0] || "";
+  data.phone = contacts[0]?.phone || "";
+  data.designation = contacts[0]?.designation || "";
 
   if (!data.name?.trim()) {
     data.name = company || contactPerson || "—";
@@ -143,6 +193,54 @@ router.get("/", async (req, res) => {
   }
 });
 
+router.get("/check-duplicate", async (req, res) => {
+  try {
+    const company = String(req.query.company || "").trim();
+    if (company.length < 2) {
+      return res.json([]);
+    }
+
+    const allLeads = await Lead.find(leadFilter(req))
+      .select("company name responsiblePerson createdBy createdAt")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const leads = allLeads
+      .filter((l) => {
+        const title = l.company?.trim() || l.name?.trim() || "";
+        return companyNamesMatch(company, title);
+      })
+      .slice(0, 10);
+
+    const creatorIds = [
+      ...new Set(leads.map((l) => String(l.createdBy)).filter(Boolean)),
+    ];
+    const users = creatorIds.length
+      ? await User.find({ _id: { $in: creatorIds } }).select("name").lean()
+      : [];
+    const nameById = Object.fromEntries(
+      users.map((u) => [String(u._id), u.name?.trim() || ""])
+    );
+
+    res.json(
+      leads.map((l) => ({
+        _id: String(l._id),
+        company: l.company?.trim() || "",
+        name: l.name?.trim() || "",
+        responsiblePerson: l.responsiblePerson?.trim() || "",
+        createdBy: l.createdBy ? String(l.createdBy) : undefined,
+        createdByName:
+          (l.createdBy && nameById[String(l.createdBy)]) ||
+          l.responsiblePerson?.trim() ||
+          "",
+        createdAt: l.createdAt,
+      }))
+    );
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.get("/:id", async (req, res) => {
   try {
     const lead = await findAccessibleLead(req.params.id, req);
@@ -156,7 +254,8 @@ router.get("/:id", async (req, res) => {
 router.post("/", async (req, res) => {
   try {
     const creator = await User.findById(req.userId).select("name role");
-    const data = normalizeLeadBody(req.body);
+    let data = normalizeLeadBody(req.body);
+    data = enforceExportLeadBody(req, data);
 
     if (creator?.name) {
       const creatorName = creator.name.trim();
@@ -187,15 +286,58 @@ router.post("/", async (req, res) => {
 
 router.patch("/:id", async (req, res) => {
   try {
+    const existing = await Lead.findOne(
+      leadFilter(req, { _id: req.params.id })
+    );
+    if (!existing) return res.status(404).json({ message: "Lead not found" });
+
+    let data = normalizeLeadBody(req.body);
+    data = enforceExportLeadBody(req, data);
+    const today = todayBusinessDate();
+    const prevDaily = String(existing.dailyActivity || "").trim();
+    const nextDaily = String(data.dailyActivity || "").trim();
+    const prevNote = String(existing.dailyActivityNote || "").trim();
+    const nextNote = String(data.dailyActivityNote || "").trim();
+
+    if (
+      existing.dailyActivitySetOn === today &&
+      prevDaily &&
+      (nextDaily !== prevDaily || nextNote !== prevNote)
+    ) {
+      return res.status(400).json({
+        message:
+          "Daily activity was already saved today. You can change it tomorrow.",
+      });
+    }
+
+    if (nextDaily && nextDaily !== prevDaily) {
+      data.dailyActivitySetOn = today;
+    } else if (!nextDaily) {
+      data.dailyActivitySetOn = "";
+      data.dailyActivityNote = "";
+    }
+
     const lead = await Lead.findOneAndUpdate(
       leadFilter(req, { _id: req.params.id }),
-      normalizeLeadBody(req.body),
+      data,
       {
         new: true,
         runValidators: true,
       }
     );
     if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+    if (nextDaily && nextDaily !== prevDaily) {
+      await logActivity({
+        type: "daily_activity",
+        userId: req.userId,
+        userName: req.userName,
+        lead,
+        dailyActivityType: nextDaily,
+        remarkText: nextNote || undefined,
+      });
+    }
+
     await autoSaveToday(req);
     res.json(leadWithDocumentUrls(lead));
   } catch (err) {

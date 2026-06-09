@@ -21,6 +21,16 @@ const documentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+const contactEntrySchema = new mongoose.Schema(
+  {
+    name: { type: String, trim: true },
+    phone: { type: String, trim: true },
+    email: { type: String, trim: true, lowercase: true },
+    designation: { type: String, trim: true },
+  },
+  { _id: false }
+);
+
 const exportDetailsSchema = new mongoose.Schema(
   {
     exportIndustryType: { type: String, trim: true },
@@ -53,10 +63,18 @@ const leadSchema = new mongoose.Schema(
     },
     name: { type: String, required: true, trim: true },
     contactPerson: { type: String, trim: true },
+    contactPersons: [{ type: String, trim: true }],
+    contacts: [contactEntrySchema],
+    designation: { type: String, trim: true },
     phone: { type: String, trim: true },
+    whatsappNumber: { type: String, trim: true },
     email: { type: String, trim: true, lowercase: true },
+    emails: [{ type: String, trim: true, lowercase: true }],
     company: { type: String, trim: true },
     website: { type: String, trim: true },
+    linkedIn: { type: String, trim: true },
+    leadSource: { type: String, trim: true },
+    address: { type: String, trim: true },
     country: { type: String, trim: true },
     industryType: {
       type: String,
@@ -99,6 +117,10 @@ const leadSchema = new mongoose.Schema(
     },
     responsiblePerson: { type: String, required: true, trim: true },
     followUpDate: { type: Date },
+    dailyActivity: { type: String, trim: true },
+    dailyActivityNote: { type: String, trim: true },
+    dailyActivitySetOn: { type: String, trim: true },
+    leadStatus: { type: String, trim: true },
     status: {
       type: String,
       enum: [

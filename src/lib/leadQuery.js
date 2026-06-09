@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { scopeClauseForRequest } = require("./adminScope");
 
 /** Rows that belong in the suppliers collection, not the leads list. */
 const legacySupplierLeadFilter = {
@@ -49,7 +50,7 @@ function ownedByUserClause(userId, userName) {
 }
 
 function leadFilterForRequest(req, extra = {}) {
-  const base = { ...buyerLeadClause(), ...extra };
+  const base = { ...buyerLeadClause(), ...scopeClauseForRequest(req), ...extra };
   if (req.isAdmin) return base;
   return { ...base, ...ownedByUserClause(req.userId, req.userName) };
 }

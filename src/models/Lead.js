@@ -27,6 +27,7 @@ const contactEntrySchema = new mongoose.Schema(
     phone: { type: String, trim: true },
     email: { type: String, trim: true, lowercase: true },
     designation: { type: String, trim: true },
+    linkedIn: { type: String, trim: true },
   },
   { _id: false }
 );

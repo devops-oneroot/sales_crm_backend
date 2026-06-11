@@ -93,8 +93,11 @@ function normalizeContactsList(contacts) {
       phone: String(c?.phone || "").trim(),
       email: String(c?.email || "").trim().toLowerCase(),
       designation: String(c?.designation || "").trim(),
+      linkedIn: String(c?.linkedIn || "").trim(),
     }))
-    .filter((c) => c.name || c.phone || c.email || c.designation);
+    .filter(
+      (c) => c.name || c.phone || c.email || c.designation || c.linkedIn
+    );
 }
 
 function normalizeLeadBody(body) {
@@ -115,7 +118,10 @@ function normalizeLeadBody(body) {
       phone: i === 0 ? String(data.phone || "").trim() : "",
       email: emails[i] || "",
       designation: i === 0 ? String(data.designation || "").trim() : "",
-    })).filter((c) => c.name || c.phone || c.email || c.designation);
+      linkedIn: i === 0 ? String(data.linkedIn || "").trim() : "",
+    })).filter(
+      (c) => c.name || c.phone || c.email || c.designation || c.linkedIn
+    );
   }
 
   const contactPersons = contacts.map((c) => c.name).filter(Boolean);
@@ -129,6 +135,7 @@ function normalizeLeadBody(body) {
   data.email = emails[0] || "";
   data.phone = contacts[0]?.phone || "";
   data.designation = contacts[0]?.designation || "";
+  data.linkedIn = contacts[0]?.linkedIn || "";
 
   if (!data.name?.trim()) {
     data.name = company || contactPerson || "—";
@@ -293,6 +300,15 @@ router.patch("/:id", async (req, res) => {
 
     let data = normalizeLeadBody(req.body);
     data = enforceExportLeadBody(req, data);
+
+    if (Array.isArray(data.contacts) && data.contacts.length) {
+      const legacyLinkedIn = String(existing.linkedIn || "").trim();
+      if (legacyLinkedIn && !data.contacts[0].linkedIn) {
+        data.contacts[0].linkedIn = legacyLinkedIn;
+        data.linkedIn = legacyLinkedIn;
+      }
+    }
+
     const today = todayBusinessDate();
     const prevDaily = String(existing.dailyActivity || "").trim();
     const nextDaily = String(data.dailyActivity || "").trim();

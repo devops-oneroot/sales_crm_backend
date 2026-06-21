@@ -9,6 +9,7 @@ const activitySchema = new mongoose.Schema(
         "status_changed",
         "remark_added",
         "daily_activity",
+        "lead_reassigned",
       ],
       required: true,
     },
@@ -30,6 +31,8 @@ const activitySchema = new mongoose.Schema(
     toStatus: { type: String, trim: true },
     remarkText: { type: String, trim: true },
     dailyActivityType: { type: String, trim: true },
+    fromResponsible: { type: String, trim: true },
+    toResponsible: { type: String, trim: true },
   },
   { timestamps: true, collection: "activities" }
 );

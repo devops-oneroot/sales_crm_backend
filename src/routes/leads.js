@@ -17,6 +17,7 @@ const {
 } = require("../config/cloudinary");
 
 const { enforceExportLeadBody } = require("../lib/adminScope");
+const { applyResponsiblePersonPatch, findSalesUserByName } = require("../lib/leadAssign");
 const { todayBusinessDate } = require("../lib/businessDate");
 const { companyNamesMatch } = require("../lib/companyNameNormalize");
 const { leadFilterForRequest, buyerLeadClause } = require("../lib/leadQuery");
@@ -273,9 +274,28 @@ router.post("/", async (req, res) => {
       }
     }
 
+    let createdBy = req.userId;
+    if (req.isAdmin && data.responsiblePerson) {
+      const assignee = await findSalesUserByName(data.responsiblePerson);
+      if (!assignee) {
+        return res.status(400).json({
+          message: "Select a valid team member to assign this lead",
+        });
+      }
+      data.responsiblePerson = assignee.name.trim();
+      if (
+        assignee.name.trim().toLowerCase() !==
+        String(creator?.name || "")
+          .trim()
+          .toLowerCase()
+      ) {
+        createdBy = assignee._id;
+      }
+    }
+
     const lead = await Lead.create({
       ...data,
-      createdBy: req.userId,
+      createdBy,
     });
     await logActivity({
       type: "lead_created",
@@ -333,6 +353,13 @@ router.patch("/:id", async (req, res) => {
       data.dailyActivityNote = "";
     }
 
+    let reassigned = null;
+    try {
+      reassigned = await applyResponsiblePersonPatch(req, data, existing);
+    } catch (err) {
+      return res.status(err.statusCode || 400).json({ message: err.message });
+    }
+
     const lead = await Lead.findOneAndUpdate(
       leadFilter(req, { _id: req.params.id }),
       data,
@@ -354,10 +381,63 @@ router.patch("/:id", async (req, res) => {
       });
     }
 
+    if (reassigned) {
+      await logActivity({
+        type: "lead_reassigned",
+        userId: req.userId,
+        userName: req.userName,
+        lead,
+        fromResponsible: reassigned.from,
+        toResponsible: reassigned.to,
+      });
+    }
+
     await autoSaveToday(req);
     res.json(leadWithDocumentUrls(lead));
   } catch (err) {
     res.status(400).json({ message: err.message });
+  }
+});
+
+router.patch("/:id/assign", async (req, res) => {
+  try {
+    if (!req.isAdmin) {
+      return res.status(403).json({ message: "Only admin can reassign leads" });
+    }
+
+    const existing = await Lead.findOne(
+      leadFilter(req, { _id: req.params.id })
+    );
+    if (!existing) return res.status(404).json({ message: "Lead not found" });
+
+    const patch = { responsiblePerson: req.body.responsiblePerson };
+    const reassigned = await applyResponsiblePersonPatch(req, patch, existing);
+
+    if (!reassigned) {
+      return res.json(leadWithDocumentUrls(existing));
+    }
+
+    const lead = await Lead.findOneAndUpdate(
+      leadFilter(req, { _id: req.params.id }),
+      {
+        responsiblePerson: patch.responsiblePerson,
+      },
+      { new: true, runValidators: true }
+    );
+    if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+    await logActivity({
+      type: "lead_reassigned",
+      userId: req.userId,
+      userName: req.userName,
+      lead,
+      fromResponsible: reassigned.from,
+      toResponsible: reassigned.to,
+    });
+
+    res.json(leadWithDocumentUrls(lead));
+  } catch (err) {
+    res.status(err.statusCode || 400).json({ message: err.message });
   }
 });
 

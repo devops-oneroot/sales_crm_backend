@@ -28,25 +28,22 @@ function missingCreatedByClause() {
 }
 
 function ownedByUserClause(userId, userName) {
+  const name = String(userName || "").trim();
+  if (name) {
+    return {
+      responsiblePerson: {
+        $regex: new RegExp(`^${escapeRegex(name)}$`, "i"),
+      },
+    };
+  }
+
   const idStr = String(userId);
   const id =
     userId instanceof mongoose.Types.ObjectId
       ? userId
       : new mongoose.Types.ObjectId(idStr);
 
-  const clauses = [{ createdBy: { $in: [id, idStr] } }];
-
-  const name = String(userName || "").trim();
-  if (name) {
-    clauses.push({
-      ...missingCreatedByClause(),
-      responsiblePerson: {
-        $regex: new RegExp(`^${escapeRegex(name)}`, "i"),
-      },
-    });
-  }
-
-  return clauses.length === 1 ? clauses[0] : { $or: clauses };
+  return { createdBy: { $in: [id, idStr] } };
 }
 
 function leadFilterForRequest(req, extra = {}) {

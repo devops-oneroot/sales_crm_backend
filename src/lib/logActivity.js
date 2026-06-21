@@ -19,6 +19,8 @@ async function logActivity({
   toStatus,
   remarkText,
   dailyActivityType,
+  fromResponsible,
+  toResponsible,
 }) {
   if (!userId || !lead?._id) return;
 
@@ -33,6 +35,8 @@ async function logActivity({
       toStatus,
       remarkText: remarkText?.trim(),
       dailyActivityType: dailyActivityType?.trim(),
+      fromResponsible: fromResponsible?.trim(),
+      toResponsible: toResponsible?.trim(),
     });
   } catch (err) {
     console.warn("Activity log failed:", err.message);

@@ -50,21 +50,25 @@ function userMatchClause(userId, userName) {
   return clauses.length ? { $or: clauses } : {};
 }
 
-function leadOwnerClause(userId, userName) {
-  const clauses = [];
-  if (userId) {
-    clauses.push({
-      createdBy: new mongoose.Types.ObjectId(String(userId)),
-    });
-  }
-  if (userName) {
-    clauses.push({
-      responsiblePerson: {
-        $regex: new RegExp(`^${escapeRegex(userName)}$`, "i"),
-      },
-    });
-  }
-  return clauses.length ? { $or: clauses } : {};
+function leadOwnerClause(_userId, userName) {
+  const name = String(userName || "").trim();
+  if (!name) return {};
+  return {
+    responsiblePerson: {
+      $regex: new RegExp(`^${escapeRegex(userName)}$`, "i"),
+    },
+  };
+}
+
+function responsibleMatchClause(userName) {
+  if (!userName) return {};
+  const regex = new RegExp(`^${escapeRegex(userName)}$`, "i");
+  return {
+    $or: [
+      { fromResponsible: { $regex: regex } },
+      { toResponsible: { $regex: regex } },
+    ],
+  };
 }
 
 function formatLeadRow(lead) {
@@ -163,6 +167,25 @@ async function getDailySummary(req, { date, responsible } = {}) {
     at: a.createdAt,
   }));
 
+  const reassignActivities = await Activity.find({
+    type: "lead_reassigned",
+    createdAt: { $gte: start, $lte: end },
+    ...responsibleMatchClause(target.userName),
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const reassignments = reassignActivities.map((a) => ({
+    leadId: String(a.leadId),
+    name: a.leadName || "—",
+    company: a.company || "",
+    contactPerson: a.contactPerson || "",
+    fromResponsible: a.fromResponsible || "",
+    toResponsible: a.toResponsible || "",
+    reassignedBy: a.userName || "",
+    at: a.createdAt,
+  }));
+
   const seenRemarks = new Set();
   const remarks = [];
   for (const r of remarkAgg) {
@@ -192,9 +215,11 @@ async function getDailySummary(req, { date, responsible } = {}) {
       leadsAdded: leadsCreated.length,
       statusChanges: statusChanges.length,
       remarksAdded: remarks.length,
+      reassignments: reassignments.length,
     },
     leadsAdded: leadsCreated.map(formatLeadRow),
     statusChanges,
+    reassignments,
     remarks,
   };
 }

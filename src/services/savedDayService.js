@@ -38,6 +38,7 @@ function formatSavedDayListItem(doc) {
       leadsAdded: summary.leadsAdded ?? 0,
       statusChanges: summary.statusChanges ?? 0,
       remarksAdded: summary.remarksAdded ?? 0,
+      reassignments: summary.reassignments ?? 0,
     },
     savedAt: o.updatedAt || o.createdAt,
   };

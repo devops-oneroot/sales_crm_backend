@@ -19,11 +19,16 @@ const {
 const { enforceExportLeadBody } = require("../lib/adminScope");
 const { applyResponsiblePersonPatch, findSalesUserByName } = require("../lib/leadAssign");
 const { todayBusinessDate } = require("../lib/businessDate");
-const { applyOutreachTouches, applyFollowUpLog } = require("../lib/outreachTouch");
+const { applyFollowUpLog } = require("../lib/outreachTouch");
 const { companyNamesMatch } = require("../lib/companyNameNormalize");
 const { leadFilterForRequest, buyerLeadClause } = require("../lib/leadQuery");
 const { logActivity } = require("../lib/logActivity");
 const autoSaveToday = require("../lib/autoSaveToday");
+const {
+  INACTIVITY_STATUSES,
+  restorePipelineOnActivity,
+  syncInactivityStatusesForRequest,
+} = require("../lib/leadInactivity");
 
 const router = express.Router();
 
@@ -61,6 +66,9 @@ const STATUSES = [
   "in_progress",
   "deal",
   "junk",
+  "idle_critical",
+  "missed_follow",
+  "no_activity",
 ];
 
 function leadWithDocumentUrls(lead) {
@@ -190,6 +198,8 @@ function normalizeLeadBody(body) {
 
 router.get("/", async (req, res) => {
   try {
+    await syncInactivityStatusesForRequest(req);
+
     const { status } = req.query;
     const extra =
       status && STATUSES.includes(status) ? { status } : {};
@@ -361,15 +371,6 @@ router.patch("/:id", async (req, res) => {
       return res.status(err.statusCode || 400).json({ message: err.message });
     }
 
-    const touchPayload = {
-      touchCall: req.body.touchCall,
-      touchEmail: req.body.touchEmail,
-      touchWhatsapp: req.body.touchWhatsapp,
-    };
-    delete data.touchCall;
-    delete data.touchEmail;
-    delete data.touchWhatsapp;
-    delete data.outreachLog;
     delete data.followUpLog;
 
     const lead = await Lead.findOneAndUpdate(
@@ -381,22 +382,6 @@ router.patch("/:id", async (req, res) => {
       }
     );
     if (!lead) return res.status(404).json({ message: "Lead not found" });
-
-    const outreachLog = await applyOutreachTouches(
-      req,
-      existing,
-      touchPayload,
-      lead
-    );
-    if (
-      outreachLog.call !== lead.outreachLog?.call ||
-      outreachLog.email !== lead.outreachLog?.email ||
-      outreachLog.whatsapp !== lead.outreachLog?.whatsapp ||
-      outreachLog.date !== lead.outreachLog?.date
-    ) {
-      lead.outreachLog = outreachLog;
-      await lead.save();
-    }
 
     const followUpResult = await applyFollowUpLog(
       req,
@@ -434,8 +419,10 @@ router.patch("/:id", async (req, res) => {
       });
     }
 
+    await restorePipelineOnActivity(lead._id);
+    const refreshed = await Lead.findById(lead._id);
     await autoSaveToday(req);
-    res.json(leadWithDocumentUrls(lead));
+    res.json(leadWithDocumentUrls(refreshed || lead));
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -494,9 +481,14 @@ router.patch("/:id/status", async (req, res) => {
     );
     if (!existing) return res.status(404).json({ message: "Lead not found" });
 
+    const update = { status };
+    if (!INACTIVITY_STATUSES.includes(status)) {
+      update.pipelineStatus = null;
+    }
+
     const lead = await Lead.findOneAndUpdate(
       leadFilter(req, { _id: req.params.id }),
-      { status },
+      update,
       { new: true, runValidators: true }
     );
     if (existing.status !== status) {
@@ -641,8 +633,10 @@ router.post("/:id/remarks", async (req, res) => {
       { new: true, runValidators: true }
     );
     if (!lead) return res.status(404).json({ message: "Lead not found" });
+    await restorePipelineOnActivity(lead._id);
+    const refreshed = await Lead.findById(lead._id);
     await autoSaveToday(req);
-    res.json(leadWithDocumentUrls(lead));
+    res.json(leadWithDocumentUrls(refreshed || lead));
   } catch (err) {
     res.status(400).json({ message: err.message });
   }

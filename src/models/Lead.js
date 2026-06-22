@@ -130,8 +130,17 @@ const leadSchema = new mongoose.Schema(
         "in_progress",
         "deal",
         "junk",
+        "idle_critical",
+        "missed_follow",
+        "no_activity",
       ],
       default: "identity",
+    },
+    /** Pipeline column before auto-move to an inactivity status */
+    pipelineStatus: {
+      type: String,
+      trim: true,
+      default: null,
     },
     remarks: [remarkSchema],
     documents: [documentSchema],

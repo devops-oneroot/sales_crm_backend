@@ -1,15 +1,21 @@
-const mongoose = require("mongoose");
 const Activity = require("../models/Activity");
 const Lead = require("../models/Lead");
 const User = require("../models/User");
 const { BUSINESS_TZ } = require("../lib/businessDate");
 const { leadFilterForRequest } = require("../lib/leadQuery");
+const {
+  DAILY_ACTIVITY_TYPE_IDS,
+  emptyDailyBuckets,
+  emptyDailyCounts,
+  resolveDailyActivityType,
+} = require("../lib/dailyActivityTypes");
 
 const OUTREACH_ACTIVITY_TYPES = [
+  "daily_activity",
+  "follow_up_set",
   "outreach_call",
   "outreach_email",
   "outreach_whatsapp",
-  "follow_up_set",
 ];
 
 function escapeRegex(value) {
@@ -53,11 +59,8 @@ function ensureRow(map, date, userName) {
     map.set(key, {
       date,
       userName,
-      calls: 0,
-      emails: 0,
-      whatsapp: 0,
-      newLeads: 0,
       followUps: 0,
+      daily: emptyDailyCounts(),
     });
   }
   return map.get(key);
@@ -78,6 +81,8 @@ function activityToLeadRow(activity) {
     contactPerson: activity.contactPerson?.trim() || "",
     at: activity.createdAt,
     followUpDate: activity.followUpDate?.trim() || undefined,
+    dailyActivityType: activity.dailyActivityType?.trim() || undefined,
+    remarkText: activity.remarkText?.trim() || undefined,
   };
 }
 
@@ -88,11 +93,34 @@ function leadDocToRow(lead) {
     company: lead.company?.trim() || "",
     contactPerson: lead.contactPerson?.trim() || "",
     at: lead.createdAt,
+    dailyActivityType: "new_lead",
   };
 }
 
 function userNameRegex(name) {
   return new RegExp(`^${escapeRegex(String(name || "").trim())}$`, "i");
+}
+
+function applyActivityToBuckets(activity, buckets) {
+  if (activity.type === "follow_up_set") {
+    buckets.followUps.push(activityToLeadRow(activity));
+    return;
+  }
+
+  const dailyType = resolveDailyActivityType(activity);
+  if (!dailyType) return;
+
+  buckets.daily[dailyType].push(activityToLeadRow(activity));
+}
+
+function applyActivityToRowCounts(activity, row) {
+  if (activity.type === "follow_up_set") {
+    row.followUps += 1;
+    return;
+  }
+
+  const dailyType = resolveDailyActivityType(activity);
+  if (dailyType) row.daily[dailyType] += 1;
 }
 
 async function getOutreachDetail(req, { date, userName } = {}) {
@@ -123,32 +151,15 @@ async function getOutreachDetail(req, { date, userName } = {}) {
     .sort({ createdAt: -1 })
     .lean();
 
-  const calls = [];
-  const emails = [];
-  const whatsapp = [];
-  const followUps = [];
+  const buckets = {
+    followUps: [],
+    daily: emptyDailyBuckets(),
+  };
 
   for (const activity of activities) {
     const activityDate = businessDateFromInstant(new Date(activity.createdAt));
     if (activityDate !== dateStr) continue;
-
-    const row = activityToLeadRow(activity);
-    switch (activity.type) {
-      case "outreach_call":
-        calls.push(row);
-        break;
-      case "outreach_email":
-        emails.push(row);
-        break;
-      case "outreach_whatsapp":
-        whatsapp.push(row);
-        break;
-      case "follow_up_set":
-        followUps.push(row);
-        break;
-      default:
-        break;
-    }
+    applyActivityToBuckets(activity, buckets);
   }
 
   const baseLeadFilter = leadFilterForRequest(req);
@@ -161,21 +172,20 @@ async function getOutreachDetail(req, { date, userName } = {}) {
     .sort({ createdAt: -1 })
     .lean();
 
-  const newLeads = newLeadDocs
-    .filter(
-      (lead) =>
-        businessDateFromInstant(new Date(lead.createdAt)) === dateStr
-    )
-    .map(leadDocToRow);
+  for (const lead of newLeadDocs) {
+    if (businessDateFromInstant(new Date(lead.createdAt)) !== dateStr) continue;
+    const row = leadDocToRow(lead);
+    const duplicate = buckets.daily.new_lead.some(
+      (item) => item.leadId === row.leadId
+    );
+    if (!duplicate) buckets.daily.new_lead.push(row);
+  }
 
   return {
     date: dateStr,
     userName: name,
-    calls,
-    emails,
-    whatsapp,
-    newLeads,
-    followUps,
+    followUps: buckets.followUps,
+    daily: buckets.daily,
   };
 }
 
@@ -222,33 +232,18 @@ async function getOutreachTable(req, { from, to, userName: userFilter } = {}) {
     if (date < fromDate || date > toDate) continue;
 
     const row = ensureRow(rows, date, name);
-    switch (activity.type) {
-      case "outreach_call":
-        row.calls += 1;
-        break;
-      case "outreach_email":
-        row.emails += 1;
-        break;
-      case "outreach_whatsapp":
-        row.whatsapp += 1;
-        break;
-      case "follow_up_set":
-        row.followUps += 1;
-        break;
-      default:
-        break;
-    }
+    applyActivityToRowCounts(activity, row);
   }
 
   const baseLeadFilter = leadFilterForRequest(req);
-  const newLeads = await Lead.find({
+  const newLeadDocs = await Lead.find({
     ...baseLeadFilter,
     createdAt: { $gte: rangeStart, $lte: rangeEnd },
   })
     .select("createdAt responsiblePerson")
     .lean();
 
-  for (const lead of newLeads) {
+  for (const lead of newLeadDocs) {
     const name = lead.responsiblePerson?.trim();
     if (!name) continue;
     if (!matchesUserFilter(name, effectiveFilter)) continue;
@@ -257,7 +252,7 @@ async function getOutreachTable(req, { from, to, userName: userFilter } = {}) {
     if (date < fromDate || date > toDate) continue;
 
     const row = ensureRow(rows, date, name);
-    row.newLeads += 1;
+    row.daily.new_lead += 1;
   }
 
   const result = [...rows.values()].sort((a, b) => {
@@ -268,6 +263,7 @@ async function getOutreachTable(req, { from, to, userName: userFilter } = {}) {
   return {
     from: fromDate,
     to: toDate,
+    dailyActivityTypes: DAILY_ACTIVITY_TYPE_IDS,
     rows: result,
   };
 }

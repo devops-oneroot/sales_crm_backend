@@ -10,6 +10,10 @@ const activitySchema = new mongoose.Schema(
         "remark_added",
         "daily_activity",
         "lead_reassigned",
+        "outreach_call",
+        "outreach_email",
+        "outreach_whatsapp",
+        "follow_up_set",
       ],
       required: true,
     },
@@ -33,6 +37,7 @@ const activitySchema = new mongoose.Schema(
     dailyActivityType: { type: String, trim: true },
     fromResponsible: { type: String, trim: true },
     toResponsible: { type: String, trim: true },
+    followUpDate: { type: String, trim: true },
   },
   { timestamps: true, collection: "activities" }
 );

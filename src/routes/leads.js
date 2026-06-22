@@ -19,6 +19,7 @@ const {
 const { enforceExportLeadBody } = require("../lib/adminScope");
 const { applyResponsiblePersonPatch, findSalesUserByName } = require("../lib/leadAssign");
 const { todayBusinessDate } = require("../lib/businessDate");
+const { applyOutreachTouches, applyFollowUpLog } = require("../lib/outreachTouch");
 const { companyNamesMatch } = require("../lib/companyNameNormalize");
 const { leadFilterForRequest, buyerLeadClause } = require("../lib/leadQuery");
 const { logActivity } = require("../lib/logActivity");
@@ -360,6 +361,17 @@ router.patch("/:id", async (req, res) => {
       return res.status(err.statusCode || 400).json({ message: err.message });
     }
 
+    const touchPayload = {
+      touchCall: req.body.touchCall,
+      touchEmail: req.body.touchEmail,
+      touchWhatsapp: req.body.touchWhatsapp,
+    };
+    delete data.touchCall;
+    delete data.touchEmail;
+    delete data.touchWhatsapp;
+    delete data.outreachLog;
+    delete data.followUpLog;
+
     const lead = await Lead.findOneAndUpdate(
       leadFilter(req, { _id: req.params.id }),
       data,
@@ -369,6 +381,36 @@ router.patch("/:id", async (req, res) => {
       }
     );
     if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+    const outreachLog = await applyOutreachTouches(
+      req,
+      existing,
+      touchPayload,
+      lead
+    );
+    if (
+      outreachLog.call !== lead.outreachLog?.call ||
+      outreachLog.email !== lead.outreachLog?.email ||
+      outreachLog.whatsapp !== lead.outreachLog?.whatsapp ||
+      outreachLog.date !== lead.outreachLog?.date
+    ) {
+      lead.outreachLog = outreachLog;
+      await lead.save();
+    }
+
+    const followUpResult = await applyFollowUpLog(
+      req,
+      existing,
+      req.body.followUpDate,
+      lead
+    );
+    if (
+      followUpResult.followUpLog.logged !== lead.followUpLog?.logged ||
+      followUpResult.followUpLog.date !== lead.followUpLog?.date
+    ) {
+      lead.followUpLog = followUpResult.followUpLog;
+      await lead.save();
+    }
 
     if (nextDaily && nextDaily !== prevDaily) {
       await logActivity({

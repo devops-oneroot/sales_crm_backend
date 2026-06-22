@@ -135,6 +135,16 @@ const leadSchema = new mongoose.Schema(
     },
     remarks: [remarkSchema],
     documents: [documentSchema],
+    outreachLog: {
+      date: { type: String, trim: true },
+      call: { type: Boolean, default: false },
+      email: { type: Boolean, default: false },
+      whatsapp: { type: Boolean, default: false },
+    },
+    followUpLog: {
+      date: { type: String, trim: true },
+      logged: { type: Boolean, default: false },
+    },
   },
   { timestamps: true }
 );

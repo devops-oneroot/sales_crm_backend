@@ -255,6 +255,23 @@ async function getOutreachTable(req, { from, to, userName: userFilter } = {}) {
     row.daily.new_lead += 1;
   }
 
+  const assigneeNames = await Lead.distinct("responsiblePerson", {
+    ...baseLeadFilter,
+    responsiblePerson: { $exists: true, $nin: [null, ""] },
+  });
+
+  const userNames = [
+    ...new Set(
+      [
+        ...teamNames,
+        ...assigneeNames.map((n) => String(n || "").trim()).filter(Boolean),
+        ...activities
+          .map((a) => a.userName?.trim())
+          .filter(Boolean),
+      ]
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+
   const result = [...rows.values()].sort((a, b) => {
     if (a.date !== b.date) return b.date.localeCompare(a.date);
     return a.userName.localeCompare(b.userName);
@@ -264,6 +281,7 @@ async function getOutreachTable(req, { from, to, userName: userFilter } = {}) {
     from: fromDate,
     to: toDate,
     dailyActivityTypes: DAILY_ACTIVITY_TYPE_IDS,
+    userNames,
     rows: result,
   };
 }

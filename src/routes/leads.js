@@ -25,6 +25,11 @@ const { leadFilterForRequest, buyerLeadClause } = require("../lib/leadQuery");
 const { logActivity } = require("../lib/logActivity");
 const autoSaveToday = require("../lib/autoSaveToday");
 const {
+  normalizeDailyActivitiesList,
+  leadDailyActivities,
+  dailyActivitiesEqual,
+} = require("../lib/dailyActivityTypes");
+const {
   INACTIVITY_STATUSES,
   restorePipelineOnActivity,
   syncInactivityStatusesForRequest,
@@ -193,6 +198,18 @@ function normalizeLeadBody(body) {
     }
   }
 
+  if (
+    data.dailyActivities !== undefined ||
+    data.dailyActivity !== undefined
+  ) {
+    const nextActivities =
+      data.dailyActivities !== undefined
+        ? normalizeDailyActivitiesList(data.dailyActivities)
+        : normalizeDailyActivitiesList(data.dailyActivity);
+    data.dailyActivities = nextActivities;
+    data.dailyActivity = nextActivities[0] || "";
+  }
+
   return data;
 }
 
@@ -341,15 +358,18 @@ router.patch("/:id", async (req, res) => {
     }
 
     const today = todayBusinessDate();
-    const prevDaily = String(existing.dailyActivity || "").trim();
-    const nextDaily = String(data.dailyActivity || "").trim();
+    const prevActivities = leadDailyActivities(existing);
+    const nextActivities = leadDailyActivities(data);
     const prevNote = String(existing.dailyActivityNote || "").trim();
     const nextNote = String(data.dailyActivityNote || "").trim();
+    const activitiesChanged = !dailyActivitiesEqual(prevActivities, nextActivities);
+    const noteChanged = nextNote !== prevNote;
 
     if (
+      !req.isAdmin &&
       existing.dailyActivitySetOn === today &&
-      prevDaily &&
-      (nextDaily !== prevDaily || nextNote !== prevNote)
+      prevActivities.length &&
+      (activitiesChanged || noteChanged)
     ) {
       return res.status(400).json({
         message:
@@ -357,9 +377,12 @@ router.patch("/:id", async (req, res) => {
       });
     }
 
-    if (nextDaily && nextDaily !== prevDaily) {
+    data.dailyActivities = nextActivities;
+    data.dailyActivity = nextActivities[0] || "";
+
+    if (nextActivities.length) {
       data.dailyActivitySetOn = today;
-    } else if (!nextDaily) {
+    } else {
       data.dailyActivitySetOn = "";
       data.dailyActivityNote = "";
     }
@@ -397,13 +420,16 @@ router.patch("/:id", async (req, res) => {
       await lead.save();
     }
 
-    if (nextDaily && nextDaily !== prevDaily) {
+    const addedActivities = nextActivities.filter(
+      (type) => !prevActivities.includes(type)
+    );
+    for (const activityType of addedActivities) {
       await logActivity({
         type: "daily_activity",
         userId: req.userId,
         userName: req.userName,
         lead,
-        dailyActivityType: nextDaily,
+        dailyActivityType: activityType,
         remarkText: nextNote || undefined,
       });
     }

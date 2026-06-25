@@ -119,6 +119,7 @@ const leadSchema = new mongoose.Schema(
     responsiblePerson: { type: String, required: true, trim: true },
     followUpDate: { type: Date },
     dailyActivity: { type: String, trim: true },
+    dailyActivities: [{ type: String, trim: true }],
     dailyActivityNote: { type: String, trim: true },
     dailyActivitySetOn: { type: String, trim: true },
     leadStatus: { type: String, trim: true },

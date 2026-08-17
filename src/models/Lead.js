@@ -24,6 +24,8 @@ const documentSchema = new mongoose.Schema(
 const contactEntrySchema = new mongoose.Schema(
   {
     name: { type: String, trim: true },
+    /** Every number for this person; `phone` mirrors the first one. */
+    phones: [{ type: String, trim: true }],
     phone: { type: String, trim: true },
     email: { type: String, trim: true, lowercase: true },
     designation: { type: String, trim: true },

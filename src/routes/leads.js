@@ -100,16 +100,30 @@ function normalizeStringList(value, legacySingle) {
   return single ? [single] : [];
 }
 
+/** One person can have several numbers — keep them all, de-duplicated. */
+function normalizeContactPhones(contact) {
+  const raw = Array.isArray(contact?.phones)
+    ? contact.phones
+    : [contact?.phones];
+  const all = [...raw, contact?.phone].map((p) => String(p || "").trim());
+  return [...new Set(all.filter(Boolean))];
+}
+
 function normalizeContactsList(contacts) {
   if (!Array.isArray(contacts)) return [];
   return contacts
-    .map((c) => ({
-      name: String(c?.name || "").trim(),
-      phone: String(c?.phone || "").trim(),
-      email: String(c?.email || "").trim().toLowerCase(),
-      designation: String(c?.designation || "").trim(),
-      linkedIn: String(c?.linkedIn || "").trim(),
-    }))
+    .map((c) => {
+      const phones = normalizeContactPhones(c);
+      return {
+        name: String(c?.name || "").trim(),
+        phones,
+        // Kept in step with phones[0] so existing readers keep working.
+        phone: phones[0] || "",
+        email: String(c?.email || "").trim().toLowerCase(),
+        designation: String(c?.designation || "").trim(),
+        linkedIn: String(c?.linkedIn || "").trim(),
+      };
+    })
     .filter(
       (c) => c.name || c.phone || c.email || c.designation || c.linkedIn
     );
@@ -130,6 +144,10 @@ function normalizeLeadBody(body) {
     const count = Math.max(contactPersons.length, emails.length, 1);
     contacts = Array.from({ length: count }, (_, i) => ({
       name: contactPersons[i] || "",
+      phones:
+        i === 0 && String(data.phone || "").trim()
+          ? [String(data.phone).trim()]
+          : [],
       phone: i === 0 ? String(data.phone || "").trim() : "",
       email: emails[i] || "",
       designation: i === 0 ? String(data.designation || "").trim() : "",

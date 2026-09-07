@@ -1,4 +1,5 @@
 const express = require("express");
+const mongoose = require("mongoose");
 const { Readable } = require("stream");
 const Lead = require("../models/Lead");
 const User = require("../models/User");
@@ -18,11 +19,12 @@ const {
 
 const { enforceExportLeadBody } = require("../lib/adminScope");
 const { applyResponsiblePersonPatch, findSalesUserByName } = require("../lib/leadAssign");
-const { todayBusinessDate } = require("../lib/businessDate");
+const { todayBusinessDate, BUSINESS_TZ } = require("../lib/businessDate");
 const { applyFollowUpLog } = require("../lib/outreachTouch");
 const { companyNamesMatch } = require("../lib/companyNameNormalize");
 const { leadFilterForRequest, buyerLeadClause } = require("../lib/leadQuery");
 const { logActivity } = require("../lib/logActivity");
+const Activity = require("../models/Activity");
 const autoSaveToday = require("../lib/autoSaveToday");
 const {
   normalizeDailyActivitiesList,
@@ -82,6 +84,13 @@ function leadWithDocumentUrls(lead) {
     obj.documents = obj.documents.map((doc) => mapDocumentForClient(doc));
   }
   return obj;
+}
+
+/** The business day (YYYY-MM-DD) a timestamp falls on. */
+function businessDateOf(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", { timeZone: BUSINESS_TZ }).format(date);
 }
 
 function leadFilter(req, extra = {}) {
@@ -247,49 +256,136 @@ router.get("/", async (req, res) => {
   }
 });
 
+/**
+ * Export and domestic are separate books: the same company may legitimately
+ * exist once as each, so a duplicate only counts within one type.
+ */
+function normalizeLeadTypeForDuplicates(value) {
+  return String(value || "").trim() === "export" ? "export" : "domestic";
+}
+
+function leadTypeOf(lead) {
+  if (lead.leadType === "export" || lead.leadType === "domestic") {
+    return lead.leadType;
+  }
+  return lead.industry === "export" || lead.exportDetails
+    ? "export"
+    : "domestic";
+}
+
+/** Digits only, compared on the last 10 so +91 / 0 prefixes still match. */
+function phoneKey(value) {
+  const digits = String(value || "").replace(/\D/g, "");
+  if (digits.length < 6) return "";
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+function leadPhoneKeys(lead) {
+  const raw = [
+    ...(lead.contacts || []).flatMap((c) => [...(c.phones || []), c.phone]),
+    lead.phone,
+    lead.whatsappNumber,
+  ];
+  return new Set(raw.map(phoneKey).filter(Boolean));
+}
+
+/**
+ * Leads that already use this company name or phone number, across the whole
+ * team — a duplicate belongs to nobody in particular, so this is not scoped to
+ * the caller the way the lead lists are.
+ */
+async function findLeadDuplicates({
+  company,
+  phones = [],
+  leadType,
+  excludeId,
+}) {
+  const name = String(company || "").trim();
+  const wantedPhones = new Set(phones.map(phoneKey).filter(Boolean));
+  const wantedType = normalizeLeadTypeForDuplicates(leadType);
+
+  if (name.length < 2 && wantedPhones.size === 0) return [];
+
+  const query = buyerLeadClause();
+  const candidates = await Lead.find(query)
+    .select(
+      "company name responsiblePerson createdBy createdAt contacts phone whatsappNumber leadType industry exportDetails"
+    )
+    .sort({ createdAt: -1 })
+    .lean();
+
+  const matches = [];
+  for (const lead of candidates) {
+    if (excludeId && String(lead._id) === String(excludeId)) continue;
+    if (leadTypeOf(lead) !== wantedType) continue;
+
+    const title = lead.company?.trim() || lead.name?.trim() || "";
+    const companyHit = name.length >= 2 && companyNamesMatch(name, title);
+
+    let phoneHit = "";
+    if (wantedPhones.size) {
+      for (const key of leadPhoneKeys(lead)) {
+        if (wantedPhones.has(key)) {
+          phoneHit = key;
+          break;
+        }
+      }
+    }
+
+    if (!companyHit && !phoneHit) continue;
+
+    matches.push({
+      lead,
+      matchedOn: companyHit && phoneHit ? "both" : companyHit ? "company" : "phone",
+      matchedPhone: phoneHit || "",
+    });
+    if (matches.length >= 10) break;
+  }
+
+  return matches;
+}
+
+async function describeDuplicates(matches) {
+  const creatorIds = [
+    ...new Set(matches.map((m) => String(m.lead.createdBy)).filter(Boolean)),
+  ];
+  const users = creatorIds.length
+    ? await User.find({ _id: { $in: creatorIds } }).select("name").lean()
+    : [];
+  const nameById = Object.fromEntries(
+    users.map((u) => [String(u._id), u.name?.trim() || ""])
+  );
+
+  return matches.map(({ lead, matchedOn, matchedPhone }) => ({
+    _id: String(lead._id),
+    company: lead.company?.trim() || "",
+    name: lead.name?.trim() || "",
+    responsiblePerson: lead.responsiblePerson?.trim() || "",
+    createdBy: lead.createdBy ? String(lead.createdBy) : undefined,
+    createdByName:
+      (lead.createdBy && nameById[String(lead.createdBy)]) ||
+      lead.responsiblePerson?.trim() ||
+      "",
+    createdAt: lead.createdAt,
+    matchedOn,
+    matchedPhone,
+  }));
+}
+
 router.get("/check-duplicate", async (req, res) => {
   try {
     const company = String(req.query.company || "").trim();
-    if (company.length < 2) {
-      return res.json([]);
-    }
+    const phones = String(req.query.phones || req.query.phone || "")
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
 
-    const allLeads = await Lead.find(leadFilter(req))
-      .select("company name responsiblePerson createdBy createdAt")
-      .sort({ createdAt: -1 })
-      .lean();
-
-    const leads = allLeads
-      .filter((l) => {
-        const title = l.company?.trim() || l.name?.trim() || "";
-        return companyNamesMatch(company, title);
-      })
-      .slice(0, 10);
-
-    const creatorIds = [
-      ...new Set(leads.map((l) => String(l.createdBy)).filter(Boolean)),
-    ];
-    const users = creatorIds.length
-      ? await User.find({ _id: { $in: creatorIds } }).select("name").lean()
-      : [];
-    const nameById = Object.fromEntries(
-      users.map((u) => [String(u._id), u.name?.trim() || ""])
-    );
-
-    res.json(
-      leads.map((l) => ({
-        _id: String(l._id),
-        company: l.company?.trim() || "",
-        name: l.name?.trim() || "",
-        responsiblePerson: l.responsiblePerson?.trim() || "",
-        createdBy: l.createdBy ? String(l.createdBy) : undefined,
-        createdByName:
-          (l.createdBy && nameById[String(l.createdBy)]) ||
-          l.responsiblePerson?.trim() ||
-          "",
-        createdAt: l.createdAt,
-      }))
-    );
+    const matches = await findLeadDuplicates({
+      company,
+      phones,
+      leadType: req.query.leadType,
+    });
+    res.json(await describeDuplicates(matches));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -337,6 +433,33 @@ router.post("/", async (req, res) => {
       ) {
         createdBy = assignee._id;
       }
+    }
+
+    // A company name or phone number already on another lead blocks the create.
+    const duplicates = await findLeadDuplicates({
+      leadType: data.leadType,
+      company: data.company || data.name,
+      phones: [
+        ...(data.contacts || []).flatMap((c) => [...(c.phones || []), c.phone]),
+        data.phone,
+      ].filter(Boolean),
+    });
+
+    if (duplicates.length) {
+      const described = await describeDuplicates(duplicates);
+      const onPhone = described.some((d) => d.matchedOn !== "company");
+      const onCompany = described.some((d) => d.matchedOn !== "phone");
+      const what =
+        onCompany && onPhone
+          ? "company name and phone number are"
+          : onPhone
+            ? "phone number is"
+            : "company name is";
+      const owner = described[0].createdByName || "another user";
+      return res.status(409).json({
+        message: `This ${what} already in the database (added by ${owner}). This lead was not created.`,
+        duplicates: described,
+      });
     }
 
     const lead = await Lead.create({
@@ -391,7 +514,7 @@ router.patch("/:id", async (req, res) => {
     ) {
       return res.status(400).json({
         message:
-          "Daily activity was already saved today. You can change it tomorrow.",
+          "Today's activity is already saved and kept in this lead's activity history. You can add a new activity tomorrow.",
       });
     }
 
@@ -438,9 +561,20 @@ router.patch("/:id", async (req, res) => {
       await lead.save();
     }
 
-    const addedActivities = nextActivities.filter(
-      (type) => !prevActivities.includes(type)
-    );
+    // A fresh entry for the day logs everything picked, even a type already
+    // used on an earlier day. Within the same day only newly ticked types are
+    // logged, so re-saving today's entry does not duplicate history rows.
+    const isNewDayEntry = existing.dailyActivitySetOn !== today;
+    const newTypes = isNewDayEntry
+      ? nextActivities
+      : nextActivities.filter((type) => !prevActivities.includes(type));
+
+    // If only the wording changed, still record it. The lead keeps just the
+    // latest note and that field is cleared when a new day's entry replaces
+    // it, so an unlogged correction would be lost for good.
+    const addedActivities =
+      newTypes.length || !noteChanged || !nextNote ? newTypes : nextActivities;
+
     for (const activityType of addedActivities) {
       await logActivity({
         type: "daily_activity",
@@ -660,6 +794,63 @@ router.delete("/:id/documents/:docId", async (req, res) => {
   }
 });
 
+/**
+ * Daily-activity history for one lead, newest first.
+ * Selecting several activities in one save writes one Activity row each, so
+ * rows saved together are regrouped back into a single entry.
+ */
+router.get("/:id/activity-log", async (req, res) => {
+  try {
+    const lead = await Lead.findOne(
+      leadFilter(req, { _id: req.params.id })
+    ).select("_id");
+    if (!lead) return res.status(404).json({ message: "Lead not found" });
+
+    const rows = await Activity.find({
+      leadId: lead._id,
+      type: "daily_activity",
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // One save = one entry. Grouping on (business day, author, note) keeps that
+    // stable no matter how far apart the individual rows were written, which a
+    // time window could not.
+    const entries = [];
+    const byKey = new Map();
+
+    for (const row of rows) {
+      const activityType = String(row.dailyActivityType || "").trim();
+      const note = String(row.remarkText || "").trim();
+      const userName = String(row.userName || "").trim();
+      const day = businessDateOf(row.createdAt);
+      const key = `${day}|${userName}|${note}`;
+      const existingEntry = byKey.get(key);
+
+      if (existingEntry) {
+        if (activityType && !existingEntry.activities.includes(activityType)) {
+          existingEntry.activities.push(activityType);
+        }
+        continue;
+      }
+
+      const entry = {
+        _id: String(row._id),
+        activities: activityType ? [activityType] : [],
+        note,
+        userName,
+        createdAt: row.createdAt,
+      };
+      byKey.set(key, entry);
+      entries.push(entry);
+    }
+
+    res.json(entries);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.post("/:id/remarks", async (req, res) => {
   try {
     const { text, author } = req.body;
@@ -686,13 +877,80 @@ router.post("/:id/remarks", async (req, res) => {
   }
 });
 
+/** Best effort — the lead is gone either way, this just avoids orphan files. */
+async function removeLeadDocuments(lead) {
+  const docs = (lead.documents || []).filter((doc) => doc.publicId);
+  if (!docs.length || !isCloudinaryReady()) return 0;
+
+  let removed = 0;
+  for (const doc of docs) {
+    try {
+      await cloudinary.uploader.destroy(doc.publicId, {
+        resource_type: resolveResourceType(doc),
+        invalidate: true,
+      });
+      removed += 1;
+    } catch (err) {
+      console.warn(
+        `Cloudinary cleanup failed for ${doc.publicId}: ${err.message}`
+      );
+    }
+  }
+  return removed;
+}
+
+/**
+ * Permanently deletes a lead. Admins only, and the delete is irreversible, so
+ * the caller must pass the lead's own name back as confirmation.
+ *
+ * The lead's rows in the activity log are deliberately kept: they are the
+ * record of work people actually did, and removing them would silently rewrite
+ * past Outreach and My Days reports.
+ */
 router.delete("/:id", async (req, res) => {
   try {
-    const lead = await Lead.findOneAndDelete(
-      leadFilter(req, { _id: req.params.id })
-    );
+    if (!req.isAdmin) {
+      return res.status(403).json({ message: "Only admins can delete leads" });
+    }
+
+    // A malformed id is a missing lead, not a server error.
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(404).json({ message: "Lead not found" });
+    }
+
+    // leadFilter also stops an export-scoped admin deleting a domestic lead.
+    const lead = await Lead.findOne(leadFilter(req, { _id: req.params.id }));
     if (!lead) return res.status(404).json({ message: "Lead not found" });
-    res.json({ message: "Lead deleted" });
+
+    const title = lead.company?.trim() || lead.name?.trim() || "";
+    const confirm = String(req.body?.confirmName ?? req.query.confirmName ?? "").trim();
+    if (!confirm || !companyNamesMatch(confirm, title)) {
+      return res.status(400).json({
+        message: `Type the lead name "${title}" to confirm deletion`,
+      });
+    }
+
+    // Written while the lead still exists, so the audit row keeps its details.
+    await logActivity({
+      type: "lead_deleted",
+      userId: req.userId,
+      userName: req.userName,
+      lead,
+      fromStatus: lead.status,
+    });
+
+    const result = await Lead.deleteOne({ _id: lead._id });
+    if (!result.deletedCount) {
+      return res.status(404).json({ message: "Lead not found" });
+    }
+
+    const removedDocuments = await removeLeadDocuments(lead);
+
+    res.json({
+      message: "Lead deleted",
+      deleted: { _id: String(lead._id), name: title },
+      removedDocuments,
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

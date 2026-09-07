@@ -10,6 +10,7 @@ const activitySchema = new mongoose.Schema(
         "remark_added",
         "daily_activity",
         "lead_reassigned",
+        "lead_deleted",
         "outreach_call",
         "outreach_email",
         "outreach_whatsapp",

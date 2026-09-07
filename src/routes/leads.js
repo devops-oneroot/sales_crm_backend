@@ -240,16 +240,98 @@ function normalizeLeadBody(body) {
   return data;
 }
 
+const LIST_DATE_FIELDS = ["createdAt", "updatedAt"];
+
+/**
+ * A YYYY-MM-DD day boundary in business time. India has no DST, so the fixed
+ * +05:30 offset is exact and avoids the server's own timezone leaking in.
+ */
+function businessDayBoundary(day, edge) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(day || "").trim())) return null;
+  const suffix = edge === "end" ? "T23:59:59.999+05:30" : "T00:00:00.000+05:30";
+  const date = new Date(`${day}${suffix}`);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function escapeForRegex(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/** Free-text search across the fields the leads table displays. */
+function searchClause(term) {
+  const q = String(term || "").trim();
+  if (q.length < 1) return null;
+  const rx = new RegExp(escapeForRegex(q), "i");
+  return {
+    $or: [
+      { company: rx },
+      { name: rx },
+      { contactPerson: rx },
+      { contactPersons: rx },
+      { email: rx },
+      { emails: rx },
+      { responsiblePerson: rx },
+      { country: rx },
+      { "contacts.name": rx },
+      { "contacts.email": rx },
+    ],
+  };
+}
+
+/** Builds the list query from the table's filters. Absent filters are ignored. */
+function buildListQuery(req) {
+  const extra = {};
+  const and = [];
+
+  const status = String(req.query.status || "").trim();
+  if (status && STATUSES.includes(status)) extra.status = status;
+
+  const responsible = String(req.query.responsible || "").trim();
+  if (responsible && responsible !== "all") {
+    extra.responsiblePerson = new RegExp(
+      `^${escapeForRegex(responsible)}$`,
+      "i"
+    );
+  }
+
+  const country = String(req.query.country || "").trim();
+  if (country === "__unset__") {
+    and.push({ $or: [{ country: { $exists: false } }, { country: "" }] });
+  } else if (country && country !== "all") {
+    extra.country = new RegExp(`^${escapeForRegex(country)}$`, "i");
+  }
+
+  const search = searchClause(req.query.search);
+  if (search) and.push(search);
+
+  const dateField = LIST_DATE_FIELDS.includes(req.query.dateField)
+    ? req.query.dateField
+    : "createdAt";
+  const from = businessDayBoundary(req.query.from, "start");
+  const to = businessDayBoundary(req.query.to, "end");
+  if (from || to) {
+    extra[dateField] = {
+      ...(from ? { $gte: from } : {}),
+      ...(to ? { $lte: to } : {}),
+    };
+  }
+
+  if (and.length) extra.$and = and;
+
+  const sortOrder = req.query.sort === "asc" ? 1 : -1;
+  const sortBy = req.query.sort || req.query.from || req.query.to || req.query.dateField
+    ? { [dateField]: sortOrder }
+    : { updatedAt: -1 };
+
+  return { filter: leadFilter(req, extra), sortBy };
+}
+
 router.get("/", async (req, res) => {
   try {
     await syncInactivityStatusesForRequest(req);
 
-    const { status } = req.query;
-    const extra =
-      status && STATUSES.includes(status) ? { status } : {};
-    const leads = await Lead.find(leadFilter(req, extra)).sort({
-      updatedAt: -1,
-    });
+    const { filter, sortBy } = buildListQuery(req);
+    const leads = await Lead.find(filter).sort(sortBy);
     res.json(leads.map(leadWithDocumentUrls));
   } catch (err) {
     res.status(500).json({ message: err.message });

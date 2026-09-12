@@ -33,7 +33,15 @@ async function migrateSuppliers() {
     }
   }
 
-  const removed = await Lead.deleteMany(legacySupplierLeadFilter);
+  // Only remove rows that now exist in `suppliers`. A row that could not be
+  // copied (no createdBy) stays put rather than being deleted uncopied.
+  const legacyIds = legacy.map((lead) => lead._id);
+  const safeIds = (
+    await Supplier.find({ _id: { $in: legacyIds } }).select("_id").lean()
+  ).map((s) => s._id);
+  const removed = safeIds.length
+    ? await Lead.deleteMany({ _id: { $in: safeIds } })
+    : { deletedCount: 0 };
   console.log(
     `Suppliers migration: ${migrated} moved to suppliers collection, ${removed.deletedCount} removed from leads`
   );

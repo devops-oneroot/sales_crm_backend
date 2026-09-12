@@ -7,7 +7,9 @@
     "dev": "nodemon index.js",
     "backfill:createdby": "node scripts/backfillCreatedBy.js",
     "migrate": "node scripts/runMigrations.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "backup": "node scripts/backupDatabase.js",
+    "restore": "node scripts/restoreDatabase.js"
   },
   "keywords": [],
   "author": "",

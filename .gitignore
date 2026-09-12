@@ -1,8 +1,10 @@
 # dependencies
 node_modules/
 
-# environment variables
+# environment variables (every variant — these hold database passwords)
 .env
+.env.*
+!.env.example
 .env.local
 .env.development.local
 .env.test.local
@@ -49,3 +51,6 @@ uploads/
 
 # MongoDB local data (if any)
 data/
+
+# database snapshots (npm run backup) — never commit data
+backups/

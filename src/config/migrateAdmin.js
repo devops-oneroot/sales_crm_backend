@@ -12,7 +12,7 @@ const ADDITIONAL_ADMINS = [
 ];
 
 const EXPORT_ONLY_ADMINS = [
-  { phone: "9945969917", password: "9945969917", name: "Export Admin" },
+  { phone: "9945969917", password: "9945969917", name: "Athish" },
 ];
 
 async function migratePrimaryAdmin() {

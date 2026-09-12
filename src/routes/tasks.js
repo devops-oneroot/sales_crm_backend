@@ -50,6 +50,23 @@ function toClient(doc, today = todayBusinessDate()) {
   };
 }
 
+/**
+ * Names on a task are snapshots from when it was assigned. Show the users'
+ * current names instead, so a renamed person is renamed on every task too.
+ * Falls back to the snapshot if the user no longer exists.
+ */
+async function withCurrentNames(tasks) {
+  const ids = [...new Set(tasks.flatMap((t) => [t.assignedTo, t.assignedBy]).filter(Boolean))];
+  if (!ids.length) return tasks;
+  const users = await User.find({ _id: { $in: ids } }).select("name").lean();
+  const nameById = Object.fromEntries(users.map((u) => [String(u._id), u.name?.trim()]));
+  for (const task of tasks) {
+    if (nameById[task.assignedTo]) task.assignedToName = nameById[task.assignedTo];
+    if (nameById[task.assignedBy]) task.assignedByName = nameById[task.assignedBy];
+  }
+  return tasks;
+}
+
 function sortByAlertThenDue(a, b) {
   const order = ALERT_SORT_ORDER[a.alert] - ALERT_SORT_ORDER[b.alert];
   if (order !== 0) return order;
@@ -97,7 +114,7 @@ router.get("/", async (req, res) => {
       tasks = tasks.filter((task) => task.alert === alert);
     }
 
-    res.json(tasks.sort(sortByAlertThenDue));
+    res.json((await withCurrentNames(tasks)).sort(sortByAlertThenDue));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -167,7 +184,7 @@ router.post("/", async (req, res) => {
       assignedByName: req.userName || "Admin",
     });
 
-    res.status(201).json(toClient(task));
+    res.status(201).json((await withCurrentNames([toClient(task)]))[0]);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -232,7 +249,7 @@ router.patch("/:id", async (req, res) => {
     }
 
     if (Object.keys(updates).length === 0) {
-      return res.json(toClient(existing));
+      return res.json((await withCurrentNames([toClient(existing)]))[0]);
     }
 
     const task = await Task.findByIdAndUpdate(req.params.id, updates, {
@@ -240,7 +257,7 @@ router.patch("/:id", async (req, res) => {
       runValidators: true,
     });
 
-    res.json(toClient(task));
+    res.json((await withCurrentNames([toClient(task)]))[0]);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -263,7 +280,7 @@ router.patch("/:id/status", async (req, res) => {
       { new: true, runValidators: true }
     );
 
-    res.json(toClient(task));
+    res.json((await withCurrentNames([toClient(task)]))[0]);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
@@ -306,7 +323,7 @@ router.post("/:id/updates", async (req, res) => {
       runValidators: true,
     });
 
-    res.json(toClient(task));
+    res.json((await withCurrentNames([toClient(task)]))[0]);
   } catch (err) {
     res.status(400).json({ message: err.message });
   }

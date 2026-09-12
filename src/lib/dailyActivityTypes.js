@@ -8,6 +8,7 @@ const DAILY_ACTIVITY_SELECTABLE_IDS = [
   "price_discussion",
   "payment_discussion",
   "sample_discussion",
+  "sample_sent",
   "negotiation",
   "sent_quotations",
   "email_reply",

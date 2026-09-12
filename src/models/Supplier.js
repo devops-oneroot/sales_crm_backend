@@ -1,4 +1,9 @@
 const mongoose = require("mongoose");
+const {
+  LEAD_STATUSES,
+  LEGACY_STATUSES,
+  DEFAULT_LEAD_STATUS,
+} = require("../lib/leadStatuses");
 
 const supplierSchema = new mongoose.Schema(
   {
@@ -31,15 +36,11 @@ const supplierSchema = new mongoose.Schema(
     followUpDate: { type: Date },
     status: {
       type: String,
-      enum: [
-        "identity",
-        "contact_established",
-        "in_progress",
-        "deal",
-        "junk",
-      ],
-      default: "identity",
+      enum: [...LEAD_STATUSES, ...LEGACY_STATUSES],
+      default: DEFAULT_LEAD_STATUS,
     },
+    /** The status this supplier had before the pipeline was renamed. */
+    legacyStatus: { type: String, trim: true },
   },
   { timestamps: true, collection: "suppliers" }
 );

@@ -1,4 +1,5 @@
 /** Map Supplier documents ↔ legacy Lead-shaped API responses for the frontend. */
+const { toCurrentStatus } = require("./leadStatuses");
 
 function pickSupplierFields(body) {
   const sd = body.supplierDetails || {};
@@ -32,7 +33,7 @@ function pickSupplierFields(body) {
       sd.labourAndOtherExpenses ?? body.labourAndOtherExpenses,
     responsiblePerson: body.responsiblePerson,
     followUpDate: body.followUpDate,
-    status: body.status || "identity",
+    status: toCurrentStatus(body.status),
   };
 }
 
@@ -87,7 +88,7 @@ function supplierToClientResponse(doc) {
     ],
     responsiblePerson: o.responsiblePerson,
     followUpDate: o.followUpDate,
-    status: o.status,
+    status: toCurrentStatus(o.status, o.pipelineStatus),
     createdBy: o.createdBy,
     remarks: [],
     documents: [],
@@ -128,7 +129,7 @@ function leadRowToSupplierFields(lead) {
     labourAndOtherExpenses: sd.labourAndOtherExpenses,
     responsiblePerson: lead.responsiblePerson,
     followUpDate: lead.followUpDate,
-    status: lead.status || "identity",
+    status: toCurrentStatus(lead.status, lead.pipelineStatus),
     createdBy: lead.createdBy,
   };
 }

@@ -1,4 +1,9 @@
 const mongoose = require("mongoose");
+const {
+  LEAD_STATUSES,
+  LEGACY_STATUSES,
+  DEFAULT_LEAD_STATUS,
+} = require("../lib/leadStatuses");
 
 const remarkSchema = new mongoose.Schema(
   {
@@ -127,24 +132,19 @@ const leadSchema = new mongoose.Schema(
     leadStatus: { type: String, trim: true },
     status: {
       type: String,
-      enum: [
-        "identity",
-        "contact_established",
-        "in_progress",
-        "deal",
-        "junk",
-        "idle_critical",
-        "missed_follow",
-        "no_activity",
-      ],
-      default: "identity",
+      // Legacy values stay accepted so a row the migration has not reached
+      // yet can still be saved; every read and write maps them to current.
+      enum: [...LEAD_STATUSES, ...LEGACY_STATUSES],
+      default: DEFAULT_LEAD_STATUS,
     },
-    /** Pipeline column before auto-move to an inactivity status */
+    /** Retired: the old board's auto-parking. Kept only so old rows still load. */
     pipelineStatus: {
       type: String,
       trim: true,
       default: null,
     },
+    /** The status this lead had before the pipeline was renamed — its backup. */
+    legacyStatus: { type: String, trim: true },
     remarks: [remarkSchema],
     documents: [documentSchema],
     outreachLog: {

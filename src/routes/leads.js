@@ -26,16 +26,18 @@ const { leadFilterForRequest, buyerLeadClause } = require("../lib/leadQuery");
 const { logActivity } = require("../lib/logActivity");
 const Activity = require("../models/Activity");
 const autoSaveToday = require("../lib/autoSaveToday");
+const { attachIdleInfo } = require("../lib/leadIdle");
 const {
   normalizeDailyActivitiesList,
   leadDailyActivities,
   dailyActivitiesEqual,
 } = require("../lib/dailyActivityTypes");
 const {
-  INACTIVITY_STATUSES,
-  restorePipelineOnActivity,
-  syncInactivityStatusesForRequest,
-} = require("../lib/leadInactivity");
+  LEAD_STATUSES,
+  toCurrentStatus,
+  isCurrentStatus,
+  storedValuesForStatus,
+} = require("../lib/leadStatuses");
 
 const router = express.Router();
 
@@ -67,22 +69,15 @@ function guessDocumentContentType(doc, response) {
   return "application/octet-stream";
 }
 
-const STATUSES = [
-  "identity",
-  "contact_established",
-  "in_progress",
-  "deal",
-  "junk",
-  "idle_critical",
-  "missed_follow",
-  "no_activity",
-];
+const STATUSES = LEAD_STATUSES;
 
 function leadWithDocumentUrls(lead) {
   const obj = lead.toObject ? lead.toObject() : { ...lead };
   if (obj.documents?.length) {
     obj.documents = obj.documents.map((doc) => mapDocumentForClient(doc));
   }
+  // A row the startup migration has not reached still shows a current status.
+  obj.status = toCurrentStatus(obj.status, obj.pipelineStatus);
   return obj;
 }
 
@@ -141,6 +136,11 @@ function normalizeContactsList(contacts) {
 function normalizeLeadBody(body) {
   const data = { ...body };
   delete data.createdBy;
+  if (data.status !== undefined) {
+    data.status = toCurrentStatus(data.status, data.pipelineStatus);
+  }
+  delete data.pipelineStatus;
+  delete data.legacyStatus;
   const company = String(data.company || "").trim();
 
   let contacts = normalizeContactsList(data.contacts);
@@ -284,7 +284,9 @@ function buildListQuery(req) {
   const and = [];
 
   const status = String(req.query.status || "").trim();
-  if (status && STATUSES.includes(status)) extra.status = status;
+  if (status && STATUSES.includes(status)) {
+    extra.status = { $in: storedValuesForStatus(status) };
+  }
 
   const responsible = String(req.query.responsible || "").trim();
   if (responsible && responsible !== "all") {
@@ -328,11 +330,9 @@ function buildListQuery(req) {
 
 router.get("/", async (req, res) => {
   try {
-    await syncInactivityStatusesForRequest(req);
-
     const { filter, sortBy } = buildListQuery(req);
     const leads = await Lead.find(filter).sort(sortBy);
-    res.json(leads.map(leadWithDocumentUrls));
+    res.json(await attachIdleInfo(leads.map(leadWithDocumentUrls)));
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -679,7 +679,6 @@ router.patch("/:id", async (req, res) => {
       });
     }
 
-    await restorePipelineOnActivity(lead._id);
     const refreshed = await Lead.findById(lead._id);
     await autoSaveToday(req);
     res.json(leadWithDocumentUrls(refreshed || lead));
@@ -732,8 +731,8 @@ router.patch("/:id/assign", async (req, res) => {
 
 router.patch("/:id/status", async (req, res) => {
   try {
-    const { status } = req.body;
-    if (!STATUSES.includes(status)) {
+    const status = String(req.body.status || "").trim();
+    if (!isCurrentStatus(status)) {
       return res.status(400).json({ message: "Invalid status" });
     }
     const existing = await Lead.findOne(
@@ -741,17 +740,14 @@ router.patch("/:id/status", async (req, res) => {
     );
     if (!existing) return res.status(404).json({ message: "Lead not found" });
 
-    const update = { status };
-    if (!INACTIVITY_STATUSES.includes(status)) {
-      update.pipelineStatus = null;
-    }
+    const update = { status, pipelineStatus: null };
 
     const lead = await Lead.findOneAndUpdate(
       leadFilter(req, { _id: req.params.id }),
       update,
       { new: true, runValidators: true }
     );
-    if (existing.status !== status) {
+    if (toCurrentStatus(existing.status, existing.pipelineStatus) !== status) {
       await logActivity({
         type: "status_changed",
         userId: req.userId,
@@ -950,7 +946,6 @@ router.post("/:id/remarks", async (req, res) => {
       { new: true, runValidators: true }
     );
     if (!lead) return res.status(404).json({ message: "Lead not found" });
-    await restorePipelineOnActivity(lead._id);
     const refreshed = await Lead.findById(lead._id);
     await autoSaveToday(req);
     res.json(leadWithDocumentUrls(refreshed || lead));

@@ -28,6 +28,12 @@ const Activity = require("../models/Activity");
 const autoSaveToday = require("../lib/autoSaveToday");
 const { attachIdleInfo } = require("../lib/leadIdle");
 const {
+  normalizeContactPhones,
+  contactDetailsLockedError,
+  mentionsContactFields,
+  dropUnmentionedFields,
+} = require("../lib/leadContactRules");
+const {
   normalizeDailyActivitiesList,
   leadDailyActivities,
   dailyActivitiesEqual,
@@ -102,15 +108,6 @@ function normalizeStringList(value, legacySingle) {
   }
   const single = String(legacySingle || "").trim();
   return single ? [single] : [];
-}
-
-/** One person can have several numbers — keep them all, de-duplicated. */
-function normalizeContactPhones(contact) {
-  const raw = Array.isArray(contact?.phones)
-    ? contact.phones
-    : [contact?.phones];
-  const all = [...raw, contact?.phone].map((p) => String(p || "").trim());
-  return [...new Set(all.filter(Boolean))];
 }
 
 function normalizeContactsList(contacts) {
@@ -571,6 +568,13 @@ router.patch("/:id", async (req, res) => {
 
     let data = normalizeLeadBody(req.body);
     data = enforceExportLeadBody(req, data);
+
+    // A request that says nothing about contacts must not blank them.
+    data = dropUnmentionedFields(req.body, data);
+    if (mentionsContactFields(req.body) && !req.isAdmin) {
+      const locked = contactDetailsLockedError(existing.contacts, data.contacts);
+      if (locked) return res.status(403).json({ message: locked });
+    }
 
     if (Array.isArray(data.contacts) && data.contacts.length) {
       const legacyLinkedIn = String(existing.linkedIn || "").trim();

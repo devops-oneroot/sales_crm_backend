@@ -480,7 +480,7 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-router.post("/", async (req, res) => {
+async function createLeadHandler(req, res) {
   try {
     const creator = await User.findById(req.userId).select("name role");
     let data = normalizeLeadBody(req.body);
@@ -557,7 +557,23 @@ router.post("/", async (req, res) => {
   } catch (err) {
     res.status(400).json({ message: err.message });
   }
-});
+}
+
+/**
+ * Creates are serialised: two identical requests arriving together (a
+ * double-click on Create Lead) would otherwise both pass the duplicate
+ * check before either row exists, and both be saved. Creates are rare, so
+ * queueing them costs nothing; the second one now sees the first and is
+ * refused with 409.
+ */
+let createQueue = Promise.resolve();
+function serializedCreate(work) {
+  const run = createQueue.then(work, work);
+  createQueue = run.catch(() => {});
+  return run;
+}
+
+router.post("/", (req, res) => serializedCreate(() => createLeadHandler(req, res)));
 
 router.patch("/:id", async (req, res) => {
   try {

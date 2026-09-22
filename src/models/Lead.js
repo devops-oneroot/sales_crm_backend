@@ -35,6 +35,8 @@ const contactEntrySchema = new mongoose.Schema(
     email: { type: String, trim: true, lowercase: true },
     designation: { type: String, trim: true },
     linkedIn: { type: String, trim: true },
+    /** Free-text extras that don't fit the fixed fields — one line each. */
+    otherDetails: [{ type: String, trim: true }],
   },
   { _id: false }
 );
@@ -75,6 +77,8 @@ const leadSchema = new mongoose.Schema(
     contacts: [contactEntrySchema],
     designation: { type: String, trim: true },
     phone: { type: String, trim: true },
+    /** Every WhatsApp number for this lead; `whatsappNumber` mirrors the first. */
+    whatsappNumbers: [{ type: String, trim: true }],
     whatsappNumber: { type: String, trim: true },
     email: { type: String, trim: true, lowercase: true },
     emails: [{ type: String, trim: true, lowercase: true }],

@@ -32,11 +32,14 @@ const {
   contactDetailsLockedError,
   mentionsContactFields,
   dropUnmentionedFields,
+  normalizeWhatsappNumbers,
+  whatsappNumbersLockedError,
+  mentionsWhatsappFields,
+  dropUnmentionedWhatsappFields,
 } = require("../lib/leadContactRules");
 const {
   normalizeDailyActivitiesList,
   leadDailyActivities,
-  dailyActivitiesEqual,
 } = require("../lib/dailyActivityTypes");
 const {
   LEAD_STATUSES,
@@ -110,6 +113,11 @@ function normalizeStringList(value, legacySingle) {
   return single ? [single] : [];
 }
 
+function normalizeOtherDetails(value) {
+  const raw = Array.isArray(value) ? value : [value];
+  return raw.map((d) => String(d || "").trim()).filter(Boolean);
+}
+
 function normalizeContactsList(contacts) {
   if (!Array.isArray(contacts)) return [];
   return contacts
@@ -123,10 +131,17 @@ function normalizeContactsList(contacts) {
         email: String(c?.email || "").trim().toLowerCase(),
         designation: String(c?.designation || "").trim(),
         linkedIn: String(c?.linkedIn || "").trim(),
+        otherDetails: normalizeOtherDetails(c?.otherDetails),
       };
     })
     .filter(
-      (c) => c.name || c.phone || c.email || c.designation || c.linkedIn
+      (c) =>
+        c.name ||
+        c.phone ||
+        c.email ||
+        c.designation ||
+        c.linkedIn ||
+        c.otherDetails.length > 0
     );
 }
 
@@ -175,6 +190,13 @@ function normalizeLeadBody(body) {
   data.phone = contacts[0]?.phone || "";
   data.designation = contacts[0]?.designation || "";
   data.linkedIn = contacts[0]?.linkedIn || "";
+
+  const whatsappNumbers = normalizeWhatsappNumbers(
+    data.whatsappNumbers,
+    data.whatsappNumber
+  );
+  data.whatsappNumbers = whatsappNumbers;
+  data.whatsappNumber = whatsappNumbers[0] || "";
 
   if (!data.name?.trim()) {
     data.name = company || contactPerson || "—";
@@ -363,6 +385,7 @@ function leadPhoneKeys(lead) {
   const raw = [
     ...(lead.contacts || []).flatMap((c) => [...(c.phones || []), c.phone]),
     lead.phone,
+    ...(lead.whatsappNumbers || []),
     lead.whatsappNumber,
   ];
   return new Set(raw.map(phoneKey).filter(Boolean));
@@ -388,7 +411,7 @@ async function findLeadDuplicates({
   const query = buyerLeadClause();
   const candidates = await Lead.find(query)
     .select(
-      "company name responsiblePerson createdBy createdAt contacts phone whatsappNumber leadType industry exportDetails"
+      "company name responsiblePerson createdBy createdAt contacts phone whatsappNumbers whatsappNumber leadType industry exportDetails"
     )
     .sort({ createdAt: -1 })
     .lean();
@@ -521,6 +544,7 @@ async function createLeadHandler(req, res) {
       phones: [
         ...(data.contacts || []).flatMap((c) => [...(c.phones || []), c.phone]),
         data.phone,
+        ...(data.whatsappNumbers || []),
       ].filter(Boolean),
     });
 
@@ -592,6 +616,21 @@ router.patch("/:id", async (req, res) => {
       if (locked) return res.status(403).json({ message: locked });
     }
 
+    // WhatsApp numbers follow the same rule as a saved phone: once stored,
+    // only an admin may change or remove one — everyone else may only add.
+    data = dropUnmentionedWhatsappFields(req.body, data);
+    if (mentionsWhatsappFields(req.body) && !req.isAdmin) {
+      const existingWhatsapp = normalizeWhatsappNumbers(
+        existing.whatsappNumbers,
+        existing.whatsappNumber
+      );
+      const lockedWhatsapp = whatsappNumbersLockedError(
+        existingWhatsapp,
+        data.whatsappNumbers
+      );
+      if (lockedWhatsapp) return res.status(403).json({ message: lockedWhatsapp });
+    }
+
     if (Array.isArray(data.contacts) && data.contacts.length) {
       const legacyLinkedIn = String(existing.linkedIn || "").trim();
       if (legacyLinkedIn && !data.contacts[0].linkedIn) {
@@ -601,33 +640,44 @@ router.patch("/:id", async (req, res) => {
     }
 
     const today = todayBusinessDate();
-    const prevActivities = leadDailyActivities(existing);
-    const nextActivities = leadDailyActivities(data);
-    const prevNote = String(existing.dailyActivityNote || "").trim();
-    const nextNote = String(data.dailyActivityNote || "").trim();
-    const activitiesChanged = !dailyActivitiesEqual(prevActivities, nextActivities);
-    const noteChanged = nextNote !== prevNote;
 
-    if (
-      !req.isAdmin &&
-      existing.dailyActivitySetOn === today &&
-      prevActivities.length &&
-      (activitiesChanged || noteChanged)
-    ) {
-      return res.status(400).json({
-        message:
-          "Today's activity is already saved and kept in this lead's activity history. You can add a new activity tomorrow.",
-      });
-    }
+    // Only touch the daily-activity snapshot when the request actually says
+    // something about it — an unrelated edit (company name, status, a
+    // reassignment) must not wipe or re-log it.
+    const mentionsActivity =
+      req.body.dailyActivities !== undefined ||
+      req.body.dailyActivity !== undefined ||
+      req.body.dailyActivityNote !== undefined;
 
-    data.dailyActivities = nextActivities;
-    data.dailyActivity = nextActivities[0] || "";
+    let nextActivities = [];
+    let nextNote = "";
 
-    if (nextActivities.length) {
-      data.dailyActivitySetOn = today;
+    if (mentionsActivity) {
+      nextActivities = leadDailyActivities(data);
+      nextNote = String(data.dailyActivityNote || "").trim();
+
+      if (nextActivities.length && !nextNote) {
+        return res.status(400).json({ message: "Activity note is required" });
+      }
+      if (nextNote && !nextActivities.length) {
+        return res
+          .status(400)
+          .json({ message: "Tick the activity this note is about" });
+      }
+
+      data.dailyActivities = nextActivities;
+      data.dailyActivity = nextActivities[0] || "";
+      data.dailyActivityNote = nextNote;
+      data.dailyActivitySetOn = nextActivities.length
+        ? today
+        : existing.dailyActivitySetOn;
     } else {
-      data.dailyActivitySetOn = "";
-      data.dailyActivityNote = "";
+      // Nothing about activity was sent — leave the lead's stored snapshot
+      // exactly as it is.
+      delete data.dailyActivities;
+      delete data.dailyActivity;
+      delete data.dailyActivityNote;
+      delete data.dailyActivitySetOn;
     }
 
     let reassigned = null;
@@ -663,29 +713,21 @@ router.patch("/:id", async (req, res) => {
       await lead.save();
     }
 
-    // A fresh entry for the day logs everything picked, even a type already
-    // used on an earlier day. Within the same day only newly ticked types are
-    // logged, so re-saving today's entry does not duplicate history rows.
-    const isNewDayEntry = existing.dailyActivitySetOn !== today;
-    const newTypes = isNewDayEntry
-      ? nextActivities
-      : nextActivities.filter((type) => !prevActivities.includes(type));
-
-    // If only the wording changed, still record it. The lead keeps just the
-    // latest note and that field is cleared when a new day's entry replaces
-    // it, so an unlogged correction would be lost for good.
-    const addedActivities =
-      newTypes.length || !noteChanged || !nextNote ? newTypes : nextActivities;
-
-    for (const activityType of addedActivities) {
-      await logActivity({
-        type: "daily_activity",
-        userId: req.userId,
-        userName: req.userName,
-        lead,
-        dailyActivityType: activityType,
-        remarkText: nextNote || undefined,
-      });
+    // Every submission that ticks at least one activity becomes one new,
+    // permanent row in this lead's activity history — there is no "already
+    // saved today" limit, and no way to edit a past entry; the next save
+    // always creates another one alongside it.
+    if (mentionsActivity && nextActivities.length) {
+      for (const activityType of nextActivities) {
+        await logActivity({
+          type: "daily_activity",
+          userId: req.userId,
+          userName: req.userName,
+          lead,
+          dailyActivityType: activityType,
+          remarkText: nextNote || undefined,
+        });
+      }
     }
 
     if (reassigned) {

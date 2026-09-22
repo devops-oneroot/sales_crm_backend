@@ -72,10 +72,55 @@ function dropUnmentionedFields(body, data) {
   return data;
 }
 
+/**
+ * WhatsApp numbers live on the lead itself, not per contact, but follow the
+ * exact same rule as a saved phone number: once stored, only an admin may
+ * change or remove it; everyone else may only add another. Kept as its own
+ * field group so a request that only touches WhatsApp never affects the
+ * separate guard around `contacts`, and vice versa.
+ */
+const WHATSAPP_FIELDS = ["whatsappNumbers", "whatsappNumber"];
+
+/** `whatsappNumber` mirrors the first entry, same pattern as phone/phones. */
+function normalizeWhatsappNumbers(numbers, legacySingle) {
+  const raw = Array.isArray(numbers) ? numbers : [];
+  const all = [...raw, legacySingle].map((n) => String(n || "").trim());
+  return [...new Set(all.filter(Boolean))];
+}
+
+function whatsappNumbersLockedError(existingNumbers, nextNumbers) {
+  const before = new Set(existingNumbers || []);
+  if (!before.size) return null;
+
+  const after = new Set(nextNumbers || []);
+  const lost = [...before].find((n) => !after.has(n));
+  if (lost) {
+    return `WhatsApp number ${lost} is already saved on this lead. Only an admin can change or remove it — you can add another number.`;
+  }
+  return null;
+}
+
+function mentionsWhatsappFields(body) {
+  return WHATSAPP_FIELDS.some((f) => body?.[f] !== undefined);
+}
+
+/** A request that says nothing about WhatsApp must not blank it either. */
+function dropUnmentionedWhatsappFields(body, data) {
+  if (!mentionsWhatsappFields(body)) {
+    for (const f of WHATSAPP_FIELDS) delete data[f];
+  }
+  return data;
+}
+
 module.exports = {
   CONTACT_FIELDS,
   normalizeContactPhones,
   contactDetailsLockedError,
   mentionsContactFields,
   dropUnmentionedFields,
+  WHATSAPP_FIELDS,
+  normalizeWhatsappNumbers,
+  whatsappNumbersLockedError,
+  mentionsWhatsappFields,
+  dropUnmentionedWhatsappFields,
 };

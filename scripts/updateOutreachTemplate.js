@@ -48,7 +48,7 @@ const signature =
 `Vasanth | OneRoot Farm
 International Exports Division
 Bengaluru, Karnataka, India
-+91 879 200 6444 · vasanth@oneroot.farm · oneroot.farm`;
++91 96067 48773 · exports@oneroot.farm · oneroot.farm`;
 const sender_address = "OneRoot Farm, International Exports Division, Bengaluru, Karnataka 560001, India";
 
 async function main() {

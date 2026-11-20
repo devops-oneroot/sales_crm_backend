@@ -41,7 +41,7 @@ Would you be open to a brief conversation this week to discuss your upcoming imp
 
 Warm regards,
 OneRoot Exports Team
-Email: export@oneroot.farm`;
+Email: exports@oneroot.farm`;
 
   // Follow-up note
   const followUpNote = `Hi ${firstName}, following up on my previous note regarding Indian turmeric fingers for ${company}. We have fresh harvest container availability ready for CIF shipping. Let me know if you would like our latest price sheet or samples!`;

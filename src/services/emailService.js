@@ -55,7 +55,7 @@ Looking forward to your reply.
 Warm regards,
 ${senderName}
 International Trade & Exports Division
-OneRoot Farm | Phone: +91 96067 48773 | Email: export@oneroot.farm | Web: https://oneroot.farm`,
+OneRoot Farm | Phone: +91 96067 48773 | Email: exports@oneroot.farm | Web: https://oneroot.farm`,
       };
     },
   },
@@ -85,7 +85,7 @@ Could we schedule a brief 10-minute introductory call next week to discuss ${com
 Warm regards,
 ${senderName}
 International Trade & Exports Division
-OneRoot Farm | Phone: +91 96067 48773 | Email: export@oneroot.farm | Web: https://oneroot.farm`,
+OneRoot Farm | Phone: +91 96067 48773 | Email: exports@oneroot.farm | Web: https://oneroot.farm`,
       };
     },
   },
@@ -128,7 +128,7 @@ Please let us know your preferred delivery timeline and whether you require samp
 Warm regards,
 ${senderName}
 International Trade & Exports Division
-OneRoot Farm | Phone: +91 96067 48773 | Email: export@oneroot.farm | Web: https://oneroot.farm`,
+OneRoot Farm | Phone: +91 96067 48773 | Email: exports@oneroot.farm | Web: https://oneroot.farm`,
       };
     },
   },
@@ -165,7 +165,7 @@ Kindly review and let us know if your quality department has additional test req
 Best regards,
 ${senderName}
 Quality Control & Compliance | OneRoot Farm
-Phone: +91 96067 48773 | Email: export@oneroot.farm`,
+Phone: +91 96067 48773 | Email: exports@oneroot.farm`,
       };
     },
   },
@@ -195,7 +195,7 @@ Kindly confirm upon receipt and let us know your team's feedback so we can final
 Sincerely,
 ${senderName}
 Logistics & Sample Desk | OneRoot Farm
-Phone: +91 96067 48773 | Email: export@oneroot.farm`,
+Phone: +91 96067 48773 | Email: exports@oneroot.farm`,
       };
     },
   },
@@ -228,7 +228,7 @@ Thank you for choosing OneRoot Farm as your strategic agricultural partner.
 Best regards,
 ${senderName}
 Commercial Operations | OneRoot Farm
-Phone: +91 96067 48773 | Email: export@oneroot.farm`,
+Phone: +91 96067 48773 | Email: exports@oneroot.farm`,
       };
     },
   },
@@ -278,7 +278,7 @@ Phone: ${importer.importerNumber || "—"}`;
     direction: "inbound",
     senderEmail: importer.email || "buyer@company.com",
     senderName: contact,
-    recipientEmail: "export@oneroot.farm",
+    recipientEmail: "exports@oneroot.farm",
     recipientName: "OneRoot Exports Team",
     subject,
     body,
@@ -360,7 +360,7 @@ async function sendEmailReply({
     : undefined;
 
   let messageId = "";
-  let senderEmail = "export@oneroot.farm";
+  let senderEmail = "exports@oneroot.farm";
 
   if (inbox && inbox.smtp && inbox.smtp.host) {
     try {
@@ -538,7 +538,7 @@ ${importer.importerName}`;
     direction: "inbound",
     senderEmail: importer.email || "buyer@company.com",
     senderName: contact,
-    recipientEmail: "export@oneroot.farm",
+    recipientEmail: "exports@oneroot.farm",
     recipientName: "OneRoot Exports Team",
     subject: subjectOverride || defaultSubject,
     body: defaultBody,

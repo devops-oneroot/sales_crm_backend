@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const EmailMessage = require("../models/EmailMessage");
 const Importer = require("../models/Importer");
 const User = require("../models/User");
@@ -304,6 +305,67 @@ async function getEmailsForImporter(importerId) {
 }
 
 /**
+ * Resolves the public server URL for tracking pixel & link clicks
+ */
+function getTrackingBaseUrl() {
+  const envUrl =
+    process.env.PUBLIC_BACKEND_URL ||
+    process.env.OUTREACH_PUBLIC_URL ||
+    process.env.BACKEND_URL;
+  if (envUrl && envUrl.trim()) {
+    return envUrl.trim().replace(/\/+$/, "");
+  }
+  return "https://oneroot-crm-backend.onrender.com";
+}
+
+/**
+ * Builds HTML email body with:
+ * 1. Mailchimp-style 1x1 invisible tracking pixel
+ * 2. Click tracking link wrapping for inferred opens
+ */
+function buildHtmlWithTracking(textBody, trackingId, baseUrl) {
+  // Escape HTML characters
+  const escaped = textBody
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+
+  // Format paragraphs
+  const paragraphs = escaped
+    .split(/\n\n+/)
+    .map((p) => {
+      const lines = p.split(/\n/).join("<br/>");
+      return `<p style="margin: 0 0 16px 0; line-height: 1.6; color: #1e293b; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px;">${lines}</p>`;
+    })
+    .join("\n");
+
+  // Mailchimp Step 4: Wrap hyperlinks with tracking redirect for inferred opens
+  const linkRegex = /(https?:\/\/[^\s<]+)/g;
+  const wrappedParagraphs = paragraphs.replace(linkRegex, (url) => {
+    const trackUrl = `${baseUrl}/api/emails/track/c/${trackingId}?url=${encodeURIComponent(url)}`;
+    return `<a href="${trackUrl}" style="color: #4f46e5; text-decoration: underline;" target="_blank" rel="noopener noreferrer">${url}</a>`;
+  });
+
+  // Mailchimp Step 1: 1x1 transparent tracking pixel
+  const pixelUrl = `${baseUrl}/api/emails/track/o/${trackingId}.gif`;
+  const trackingPixel = `<img src="${pixelUrl}" width="1" height="1" border="0" alt="" style="display:none!important;width:1px!important;height:1px!important;border:0!important;margin:0!important;padding:0!important;opacity:0!important;" />`;
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 20px; background-color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
+  <div style="max-width: 600px; margin: 0 auto;">
+    ${wrappedParagraphs}
+    ${trackingPixel}
+  </div>
+</body>
+</html>`;
+}
+
+/**
  * Send an outbound email reply
  */
 async function sendEmailReply({
@@ -362,12 +424,18 @@ async function sendEmailReply({
   let messageId = "";
   let senderEmail = "exports@oneroot.farm";
 
+  // Generate Mailchimp-grade tracking ID & HTML body
+  const trackingId = crypto.randomBytes(16).toString("hex");
+  const trackingBaseUrl = getTrackingBaseUrl();
+  const htmlBody = buildHtmlWithTracking(body.trim(), trackingId, trackingBaseUrl);
+
   if (inbox && inbox.smtp && inbox.smtp.host) {
     try {
       const result = await sendMail(inbox, {
         to: recipientEmail,
         subject: subject.trim(),
         text: body.trim(),
+        html: htmlBody,
         inReplyTo: parentId,
         references,
         attachments,
@@ -407,6 +475,7 @@ async function sendEmailReply({
     messageId,
     references: references || [],
     inboxEmail: senderEmail,
+    trackingId,
   });
 
   // Mark all previous inbound emails from this buyer as read

@@ -51,7 +51,7 @@ const emailMessageSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["unread", "read", "sent", "delivered", "failed", "bounced"],
+      enum: ["unread", "read", "sent", "delivered", "failed", "bounced", "opened", "clicked"],
       default: "sent",
     },
     sentAt: {
@@ -82,6 +82,33 @@ const emailMessageSchema = new mongoose.Schema(
     outreachStep: { type: Number }, // 1 = Email #1, 2 = Email #2
     classification: { type: String, trim: true }, // reply | bounce | auto_reply | unsubscribe
     error: { type: String, trim: true },
+    // Mailchimp-Grade Open & Click Tracking
+    trackingId: { type: String, trim: true, unique: true, sparse: true, index: true },
+    openCount: { type: Number, default: 0 },
+    firstOpenedAt: { type: Date },
+    lastOpenedAt: { type: Date },
+    isOpenAppleMpp: { type: Boolean, default: false }, // Flagged when pre-loaded by Apple Mail Privacy Protection proxy
+    inferredFromClick: { type: Boolean, default: false }, // Inferred open if recipient had images disabled but clicked a link
+    opens: [
+      {
+        timestamp: { type: Date, default: Date.now },
+        ip: { type: String, trim: true },
+        userAgent: { type: String, trim: true },
+        isAppleMpp: { type: Boolean, default: false },
+        inferredFromClick: { type: Boolean, default: false },
+      },
+    ],
+    clickCount: { type: Number, default: 0 },
+    firstClickedAt: { type: Date },
+    lastClickedAt: { type: Date },
+    clicks: [
+      {
+        url: { type: String, trim: true },
+        timestamp: { type: Date, default: Date.now },
+        ip: { type: String, trim: true },
+        userAgent: { type: String, trim: true },
+      },
+    ],
   },
   { timestamps: true, collection: "email_messages" }
 );

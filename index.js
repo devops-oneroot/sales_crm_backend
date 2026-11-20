@@ -29,6 +29,7 @@ const activityRouter = require("./src/routes/activity");
 const dailyPricesRouter = require("./src/routes/dailyPrices");
 const tasksRouter = require("./src/routes/tasks");
 const emailsRouter = require("./src/routes/emails");
+const emailTrackingRouter = require("./src/routes/emailTracking");
 const linkedinRouter = require("./src/routes/linkedin");
 const { syncLinkedInLeads } = require("./src/services/linkedInScraperService");
 const { getDiscoverySchedule } = require("./src/services/discoveryService");
@@ -65,6 +66,8 @@ app.use("/api/match", requireAuth, matchRouter);
 app.use("/api/activity", requireAuth, activityRouter);
 app.use("/api/daily-prices", requireAuth, dailyPricesRouter);
 app.use("/api/tasks", requireAuth, tasksRouter);
+// Public email open & click tracking endpoints (must be accessible by mail clients without login)
+app.use("/api/emails/track", emailTrackingRouter);
 app.use("/api/emails", requireAuth, emailsRouter);
 app.use("/api/linkedin", requireAuth, linkedinRouter);
 // Unsubscribe links in outreach emails must work without logging in.

@@ -22,6 +22,8 @@ router.get("/outreach-logs", async (req, res) => {
     if (status === "sent") {
       query.direction = "outbound";
       query.status = { $in: ["sent", "delivered"] };
+    } else if (status === "opened") {
+      query.$or = [{ status: "opened" }, { openCount: { $gt: 0 } }];
     } else if (status === "bounced") {
       query.$or = [
         { status: "bounced" },
@@ -75,6 +77,15 @@ router.get("/outreach-logs", async (req, res) => {
       }),
       EmailMessage.countDocuments({ status: "delivered" }),
       EmailMessage.countDocuments({ direction: "inbound" }),
+      EmailMessage.countDocuments({
+        $or: [{ status: "opened" }, { openCount: { $gt: 0 } }],
+      }),
+      EmailMessage.countDocuments({
+        $or: [{ status: "opened" }, { openCount: { $gt: 0 } }],
+        isOpenAppleMpp: { $ne: true },
+      }),
+      EmailMessage.countDocuments({ isOpenAppleMpp: true }),
+      EmailMessage.countDocuments({ clickCount: { $gt: 0 } }),
       Suppression.find({ reason: "bounced" }).lean(),
       Importer.find({ outreach_status: "bounced" })
         .select(
@@ -94,6 +105,10 @@ router.get("/outreach-logs", async (req, res) => {
         ),
         totalDelivered,
         totalReplies,
+        totalOpened,
+        humanOpens,
+        appleMppOpens,
+        totalClicked,
       },
       emails,
       bouncedSuppressions,

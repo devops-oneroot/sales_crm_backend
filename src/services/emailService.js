@@ -55,7 +55,7 @@ Looking forward to your reply.
 Warm regards,
 ${senderName}
 International Trade & Exports Division
-OneRoot Farm | Email: export@oneroot.farm | Web: https://oneroot.farm`,
+OneRoot Farm | Phone: +91 96067 48773 | Email: export@oneroot.farm | Web: https://oneroot.farm`,
       };
     },
   },
@@ -85,7 +85,7 @@ Could we schedule a brief 10-minute introductory call next week to discuss ${com
 Warm regards,
 ${senderName}
 International Trade & Exports Division
-OneRoot Farm | Email: export@oneroot.farm | Web: https://oneroot.farm`,
+OneRoot Farm | Phone: +91 96067 48773 | Email: export@oneroot.farm | Web: https://oneroot.farm`,
       };
     },
   },
@@ -128,7 +128,7 @@ Please let us know your preferred delivery timeline and whether you require samp
 Warm regards,
 ${senderName}
 International Trade & Exports Division
-OneRoot Farm | Email: export@oneroot.farm`,
+OneRoot Farm | Phone: +91 96067 48773 | Email: export@oneroot.farm | Web: https://oneroot.farm`,
       };
     },
   },
@@ -164,7 +164,8 @@ Kindly review and let us know if your quality department has additional test req
 
 Best regards,
 ${senderName}
-Quality Control & Compliance | OneRoot Farm`,
+Quality Control & Compliance | OneRoot Farm
+Phone: +91 96067 48773 | Email: export@oneroot.farm`,
       };
     },
   },
@@ -193,7 +194,8 @@ Kindly confirm upon receipt and let us know your team's feedback so we can final
 
 Sincerely,
 ${senderName}
-Logistics & Sample Desk | OneRoot Farm`,
+Logistics & Sample Desk | OneRoot Farm
+Phone: +91 96067 48773 | Email: export@oneroot.farm`,
       };
     },
   },
@@ -225,7 +227,8 @@ Thank you for choosing OneRoot Farm as your strategic agricultural partner.
 
 Best regards,
 ${senderName}
-Commercial Operations | OneRoot Farm`,
+Commercial Operations | OneRoot Farm
+Phone: +91 96067 48773 | Email: export@oneroot.farm`,
       };
     },
   },

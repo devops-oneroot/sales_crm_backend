@@ -51,7 +51,7 @@ const outreachSettingsSchema = new mongoose.Schema(
         "Vasanth | OneRoot Farm\n" +
         "International Exports Division\n" +
         "Bengaluru, Karnataka, India\n" +
-        "+91 879 200 6444 · vasanth@oneroot.farm · oneroot.farm",
+        "+91 96067 48773 · vasanth@oneroot.farm · oneroot.farm",
     }, // appended under "Best regards,"
     sender_address: {
       type: String,

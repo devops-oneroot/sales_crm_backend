@@ -53,6 +53,10 @@ router.get("/outreach-logs", async (req, res) => {
       totalBounced,
       totalDelivered,
       totalReplies,
+      totalOpened,
+      humanOpens,
+      appleMppOpens,
+      totalClicked,
       bouncedSuppressions,
       bouncedImporters,
     ] = await Promise.all([

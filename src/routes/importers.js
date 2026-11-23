@@ -1,5 +1,6 @@
 const express = require("express");
 const Importer = require("../models/Importer");
+const Lead = require("../models/Lead");
 const User = require("../models/User");
 const { toCurrentStatus } = require("../lib/leadStatuses");
 const {
@@ -273,6 +274,174 @@ router.get("/verification/status", async (_req, res) => {
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
+  }
+});
+
+// POST sync export leads from Leads tab into Importers pipeline
+router.post("/sync-leads", async (req, res) => {
+  try {
+    const creator = await User.findById(req.userId).select("name role");
+    const adminUser = await User.findOne({ role: "admin" }).select("_id name");
+    const fallbackUserId = req.userId || adminUser?._id;
+    const fallbackUserName = creator?.name || adminUser?.name || "System";
+
+    // Find export leads (or any leads explicitly marked as export)
+    const leads = await Lead.find({ leadType: "export" }).lean();
+    if (!leads.length) {
+      return res.json({
+        success: true,
+        message: "No export leads found to sync.",
+        stats: { totalFound: 0, created: 0, updated: 0, skipped: 0 },
+      });
+    }
+
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+
+    for (const lead of leads) {
+      const compName = String(lead.company || lead.name || "").trim();
+      if (!compName) {
+        skipped++;
+        continue;
+      }
+
+      const contactPerson = String(
+        lead.contactPerson ||
+        lead.contacts?.[0]?.name ||
+        ""
+      ).trim();
+
+      const email = String(
+        lead.email ||
+        lead.emails?.[0] ||
+        lead.contacts?.find((c) => c.email)?.email ||
+        ""
+      ).trim().toLowerCase();
+
+      const phone = String(
+        lead.phone ||
+        lead.whatsappNumber ||
+        lead.whatsappNumbers?.[0] ||
+        lead.contacts?.[0]?.phone ||
+        lead.contacts?.[0]?.phones?.[0] ||
+        ""
+      ).trim();
+
+      const website = lead.website ? String(lead.website).trim() : "";
+      const website_domain = website ? normalizeDomain(website) : "";
+
+      // Deduplication: Match by company name OR email OR website_domain OR source_url
+      const orConditions = [
+        { importerName: new RegExp(`^${compName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+        { source_url: `manual://lead/${lead._id}` },
+      ];
+      if (email) orConditions.push({ email });
+      if (website_domain) orConditions.push({ website_domain });
+
+      const existing = await Importer.findOne({ $or: orConditions });
+
+      if (existing) {
+        let modified = false;
+        if (!existing.email && email) {
+          existing.email = email;
+          modified = true;
+        }
+        if (!existing.importerNumber && phone) {
+          existing.importerNumber = phone;
+          modified = true;
+        }
+        if (!existing.contactPerson && contactPerson) {
+          existing.contactPerson = contactPerson;
+          modified = true;
+        }
+        if (!existing.country && lead.country) {
+          existing.country = lead.country;
+          modified = true;
+        }
+        if (modified) {
+          await existing.save();
+          updated++;
+        } else {
+          skipped++;
+        }
+      } else {
+        let products = [];
+        if (Array.isArray(lead.products) && lead.products.length) {
+          products = lead.products.map((p) => (typeof p === "string" ? p : p.name)).filter(Boolean);
+        }
+        if (!products.length && lead.exportDetails?.materialType) {
+          products = [lead.exportDetails.materialType];
+        }
+        if (!products.length) {
+          products = ["Turmeric"];
+        }
+
+        let pipeline_status = "New";
+        const st = String(lead.status || "").toLowerCase();
+        if (st.includes("contact") || st.includes("established")) {
+          pipeline_status = "Verified";
+        } else if (st.includes("quotation") || st.includes("sample")) {
+          pipeline_status = "Sample sent";
+        } else if (st.includes("order")) {
+          pipeline_status = "Order";
+        } else if (st.includes("lost")) {
+          pipeline_status = "Lost";
+        }
+
+        await Importer.create({
+          importerName: compName,
+          companyName: compName,
+          contactPerson,
+          importerNumber: phone,
+          email,
+          website,
+          website_domain,
+          country: lead.country || "Global",
+          state: lead.exportDetails?.deliveryState || "",
+          city: lead.exportDetails?.deliveryDistrict || "",
+          address: lead.address || "",
+          products,
+          materialType: lead.exportDetails?.materialType || "Export Grade Turmeric",
+          curcuminPercent: Number(lead.exportDetails?.minCurcumin) || 3.5,
+          polishLevel: lead.exportDetails?.polishLevel || "Double Polished",
+          quantityKg: Number(lead.exportDetails?.quantityNeededKg) || 25000,
+          price: Number(lead.exportDetails?.maxPrice) || 155,
+          incoterm: lead.exportDetails?.incoterm || "CIF",
+          portOfDischarge: lead.exportDetails?.portDelivery || "",
+          paymentTerms: lead.exportDetails?.paymentDays ? `${lead.exportDetails.paymentDays} days credit` : "30% Advance, 70% BL scan",
+          pipeline_status,
+          source_type: "manual",
+          source_url: `manual://lead/${lead._id}`,
+          fetched_at: lead.createdAt || new Date(),
+          createdBy: lead.createdBy || fallbackUserId,
+          responsiblePerson: lead.responsiblePerson || fallbackUserName,
+          timeline: [
+            {
+              status: "Created",
+              note: `Synced from Export Leads database (Lead ID: ${lead._id})`,
+              changed_by: fallbackUserName,
+              timestamp: new Date(),
+            },
+          ],
+        });
+        created++;
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Sync complete: ${created} new buyers added, ${updated} enriched, ${skipped} already up to date.`,
+      stats: {
+        totalFound: leads.length,
+        created,
+        updated,
+        skipped,
+      },
+    });
+  } catch (err) {
+    console.error("[SyncLeads] Error:", err);
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 

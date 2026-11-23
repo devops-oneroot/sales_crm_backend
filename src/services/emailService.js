@@ -315,7 +315,7 @@ function getTrackingBaseUrl() {
   if (envUrl && envUrl.trim()) {
     return envUrl.trim().replace(/\/+$/, "");
   }
-  return "https://oneroot-crm-backend.onrender.com";
+  return "https://oneroot-3zsg.onrender.com";
 }
 
 /**

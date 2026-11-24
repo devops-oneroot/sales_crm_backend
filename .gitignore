@@ -47,7 +47,8 @@ tmp/
 temp/
 
 # uploads (optional)
-uploads/
+uploads/*
+!uploads/oneroot_IPM_Turmeric_Europe_v4.pdf
 
 # MongoDB local data (if any)
 data/

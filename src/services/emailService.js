@@ -350,6 +350,11 @@ function buildHtmlWithTracking(textBody, trackingId, baseUrl) {
   const pixelUrl = `${baseUrl}/api/emails/track/o/${trackingId}.gif`;
   const trackingPixel = `<img src="${pixelUrl}" width="1" height="1" border="0" alt="" style="display:none!important;width:1px!important;height:1px!important;border:0!important;margin:0!important;padding:0!important;opacity:0!important;" />`;
 
+  // Honeypot link: invisible to humans, but security scanners follow every href.
+  // A hit here identifies the scanner's IP so its pixel/link hits are discarded.
+  const honeypotUrl = `${baseUrl}/api/emails/track/h/${trackingId}`;
+  const honeypot = `<div style="display:none!important;max-height:0;overflow:hidden;mso-hide:all;font-size:0;line-height:0;" aria-hidden="true"><a href="${honeypotUrl}" tabindex="-1" style="display:none!important;color:transparent;">&#8203;</a></div>`;
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -360,6 +365,7 @@ function buildHtmlWithTracking(textBody, trackingId, baseUrl) {
   <div style="max-width: 600px; margin: 0 auto;">
     ${wrappedParagraphs}
     ${trackingPixel}
+    ${honeypot}
   </div>
 </body>
 </html>`;

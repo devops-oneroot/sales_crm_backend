@@ -96,8 +96,19 @@ const emailMessageSchema = new mongoose.Schema(
         userAgent: { type: String, trim: true },
         isAppleMpp: { type: Boolean, default: false },
         inferredFromClick: { type: Boolean, default: false },
+        isBot: { type: Boolean, default: false }, // security scanner / prefetch — not counted as a human open
+        botReason: { type: String, trim: true },
       },
     ],
+    botOpenCount: { type: Number, default: 0 },
+    // Hits on the invisible honeypot link — only automated scanners follow it
+    scannerHits: [
+      {
+        timestamp: { type: Date, default: Date.now },
+        ip: { type: String, trim: true },
+        userAgent: { type: String, trim: true },
+      },
+    ], // pixel loads filtered out as scanners/prefetch
     clickCount: { type: Number, default: 0 },
     firstClickedAt: { type: Date },
     lastClickedAt: { type: Date },
@@ -107,6 +118,8 @@ const emailMessageSchema = new mongoose.Schema(
         timestamp: { type: Date, default: Date.now },
         ip: { type: String, trim: true },
         userAgent: { type: String, trim: true },
+        isBot: { type: Boolean, default: false },
+        botReason: { type: String, trim: true },
       },
     ],
   },

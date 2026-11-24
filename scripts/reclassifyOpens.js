@@ -23,7 +23,12 @@ const APPLY = process.argv.includes("--apply");
   for (const email of emails) {
     // Replay events in order so burst detection sees the same history it would have live
     const opens = [...email.opens].sort((a, b) => a.timestamp - b.timestamp);
-    const replay = { sentAt: email.sentAt, createdAt: email.createdAt, opens: [] };
+    const replay = {
+      sentAt: email.sentAt,
+      createdAt: email.createdAt,
+      scannerHits: email.scannerHits || [],
+      opens: [],
+    };
     let human = 0;
     let bots = 0;
     let firstHuman = null;

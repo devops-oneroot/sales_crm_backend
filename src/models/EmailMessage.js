@@ -100,7 +100,15 @@ const emailMessageSchema = new mongoose.Schema(
         botReason: { type: String, trim: true },
       },
     ],
-    botOpenCount: { type: Number, default: 0 }, // pixel loads filtered out as scanners/prefetch
+    botOpenCount: { type: Number, default: 0 },
+    // Hits on the invisible honeypot link — only automated scanners follow it
+    scannerHits: [
+      {
+        timestamp: { type: Date, default: Date.now },
+        ip: { type: String, trim: true },
+        userAgent: { type: String, trim: true },
+      },
+    ], // pixel loads filtered out as scanners/prefetch
     clickCount: { type: Number, default: 0 },
     firstClickedAt: { type: Date },
     lastClickedAt: { type: Date },

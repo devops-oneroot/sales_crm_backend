@@ -51,6 +51,27 @@ function detectAppleMailMpp(userAgent, headers = {}) {
   return isAppleEngine && (isMailClient || isApplePlatform);
 }
 
+// Hits from the same network as a honeypot hit, within this window, are the scanner
+const HONEYPOT_WINDOW_MS = 15 * 60 * 1000;
+
+// Network prefix: IPv4 /16, IPv6 /48. Scanners rotate IPs within the same block.
+function ipPrefix(ip) {
+  const s = String(ip || "").replace(/^::ffff:/, "");
+  if (s.includes(".")) return s.split(".").slice(0, 2).join(".");
+  if (s.includes(":")) return s.split(":").slice(0, 3).join(":").toLowerCase();
+  return s;
+}
+
+function matchesScanner(email, ip, ts) {
+  const prefix = ipPrefix(ip);
+  if (!prefix) return false;
+  return (email.scannerHits || []).some(
+    (h) =>
+      ipPrefix(h.ip) === prefix &&
+      Math.abs(ts - new Date(h.timestamp).getTime()) < HONEYPOT_WINDOW_MS
+  );
+}
+
 // Gmail only fetches images through its proxy when the message is actually viewed
 function isGoogleImageProxy(ua) {
   return /googleimageproxy|ggpht\.com/i.test(ua || "");
@@ -65,6 +86,9 @@ function classifyHit(email, { userAgent, ip, headers = {}, kind, now = Date.now(
   if (!ua.trim()) return { isBot: true, reason: "empty user-agent" };
   if (BOT_UA_PATTERNS.some((re) => re.test(ua))) {
     return { isBot: true, reason: "scanner user-agent" };
+  }
+  if (matchesScanner(email, ip, now)) {
+    return { isBot: true, reason: "same network as honeypot-link scanner" };
   }
   if (kind === "open" && detectAppleMailMpp(ua, headers)) {
     return { isBot: true, reason: "Apple Mail Privacy Protection prefetch" };
@@ -312,5 +336,118 @@ router.get("/c/:trackingId", async (req, res) => {
   }
 });
 
+/**
+ * Recompute an importer's open aggregates from its outbound emails.
+ */
+async function syncImporterOpens(importerId) {
+  if (!importerId) return;
+  const emails = await EmailMessage.find(
+    { importerId, direction: "outbound" },
+    { openCount: 1, firstOpenedAt: 1 }
+  ).lean();
+  const total = emails.reduce((n, e) => n + (e.openCount || 0), 0);
+  const first = emails
+    .map((e) => e.firstOpenedAt)
+    .filter(Boolean)
+    .sort((a, b) => a - b)[0];
+  await Importer.updateOne(
+    { _id: importerId },
+    total
+      ? { $set: { email_open_count: total, email_opened_at: first } }
+      : { $set: { email_open_count: 0 }, $unset: { email_opened_at: "" } }
+  );
+}
+
+/**
+ * Retroactively mark opens/clicks from the honeypot scanner's network as bots
+ * (the scanner often loads the pixel before following the honeypot link) and
+ * recompute counters/status. Returns number of events revoked.
+ */
+async function revokeScannerEvents(emailId) {
+  const email = await EmailMessage.findById(emailId);
+  if (!email) return 0;
+  let revoked = 0;
+  let revokedOpens = 0;
+
+  for (const o of email.opens || []) {
+    if (!o.isBot && matchesScanner(email, o.ip, new Date(o.timestamp).getTime())) {
+      o.isBot = true;
+      o.botReason = "same network as honeypot-link scanner";
+      revoked++;
+      revokedOpens++;
+    }
+  }
+  for (const c of email.clicks || []) {
+    if (!c.isBot && matchesScanner(email, c.ip, new Date(c.timestamp).getTime())) {
+      c.isBot = true;
+      c.botReason = "same network as honeypot-link scanner";
+      revoked++;
+    }
+  }
+  if (!revoked) return 0;
+
+  const humanOpens = email.opens.filter((o) => !o.isBot);
+  const humanClicks = email.clicks.filter((c) => !c.isBot);
+  email.openCount = humanOpens.length;
+  email.botOpenCount = email.opens.length - humanOpens.length;
+  email.firstOpenedAt = humanOpens[0]?.timestamp;
+  email.lastOpenedAt = humanOpens[humanOpens.length - 1]?.timestamp;
+  email.inferredFromClick = humanOpens.some((o) => o.inferredFromClick);
+  email.clickCount = humanClicks.length;
+  email.firstClickedAt = humanClicks[0]?.timestamp;
+  email.lastClickedAt = humanClicks[humanClicks.length - 1]?.timestamp;
+  if (!email.openCount && email.status === "opened") email.status = "sent";
+  await email.save();
+
+  if (email.importerId) {
+    await syncImporterOpens(email.importerId);
+    if (revokedOpens) {
+      await Importer.updateOne(
+        { _id: email.importerId },
+        {
+          $push: {
+            timeline: {
+              status: "Tracking Corrected",
+              note: `${revokedOpens} open(s) of email to ${email.recipientEmail} discarded: made by a mail security scanner, not the recipient`,
+              changed_by: "System Tracker",
+              timestamp: new Date(),
+            },
+          },
+        }
+      );
+    }
+  }
+  return revoked;
+}
+
+/**
+ * GET /api/emails/track/h/:trackingId
+ * Honeypot: hidden link no human can see or click. Any request here is a
+ * scanner; its network is blacklisted for this email.
+ */
+router.get("/h/:trackingId", async (req, res) => {
+  res.status(204).end();
+
+  const trackingId = String(req.params.trackingId || "").trim();
+  if (!trackingId) return;
+
+  try {
+    const { userAgent, ip } = requestMeta(req);
+    const email = await EmailMessage.findOneAndUpdate(
+      { trackingId },
+      {
+        $push: {
+          scannerHits: { timestamp: new Date(), ip, userAgent: userAgent.slice(0, 300) },
+        },
+      },
+      { returnDocument: "after" }
+    );
+    if (email) await revokeScannerEvents(email._id);
+  } catch (err) {
+    console.error("[EmailTracker] Honeypot logging error:", err.message);
+  }
+});
+
 module.exports = router;
 module.exports.classifyHit = classifyHit;
+module.exports.syncImporterOpens = syncImporterOpens;

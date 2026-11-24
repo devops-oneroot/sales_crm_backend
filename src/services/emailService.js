@@ -346,14 +346,11 @@ function buildHtmlWithTracking(textBody, trackingId, baseUrl) {
     return `<a href="${trackUrl}" style="color: #4f46e5; text-decoration: underline;" target="_blank" rel="noopener noreferrer">${url}</a>`;
   });
 
-  // Mailchimp Step 1: 1x1 transparent tracking pixel
-  const pixelUrl = `${baseUrl}/api/emails/track/o/${trackingId}.gif`;
-  const trackingPixel = `<img src="${pixelUrl}" width="1" height="1" border="0" alt="" style="display:none!important;width:1px!important;height:1px!important;border:0!important;margin:0!important;padding:0!important;opacity:0!important;" />`;
-
-  // Honeypot link: invisible to humans, but security scanners follow every href.
-  // A hit here identifies the scanner's IP so its pixel/link hits are discarded.
-  const honeypotUrl = `${baseUrl}/api/emails/track/h/${trackingId}`;
-  const honeypot = `<div style="display:none!important;max-height:0;overflow:hidden;mso-hide:all;font-size:0;line-height:0;" aria-hidden="true"><a href="${honeypotUrl}" tabindex="-1" style="display:none!important;color:transparent;">&#8203;</a></div>`;
+  // Open tracking via a visible signature logo. Hidden/1x1 images and hidden links
+  // are flagged by Outlook as tracking content and push mail to Junk, so nothing
+  // in the email is hidden.
+  const logoUrl = `${baseUrl}/api/emails/track/o/${trackingId}.png`;
+  const signatureLogo = `<p style="margin: 24px 0 0 0;"><img src="${logoUrl}" width="140" height="55" alt="OneRoot" style="display:block;width:140px;height:auto;border:0;" /></p>`;
 
   return `<!DOCTYPE html>
 <html>
@@ -364,8 +361,7 @@ function buildHtmlWithTracking(textBody, trackingId, baseUrl) {
 <body style="margin: 0; padding: 20px; background-color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
   <div style="max-width: 600px; margin: 0 auto;">
     ${wrappedParagraphs}
-    ${trackingPixel}
-    ${honeypot}
+    ${signatureLogo}
   </div>
 </body>
 </html>`;

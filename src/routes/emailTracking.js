@@ -1,8 +1,20 @@
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 const EmailMessage = require("../models/EmailMessage");
 const Importer = require("../models/Importer");
 
 const router = express.Router();
+
+// Signature logo used as the open-tracking image (visible, so Outlook doesn't flag it)
+let EMAIL_LOGO_PNG = null;
+try {
+  EMAIL_LOGO_PNG = fs.readFileSync(
+    path.resolve(__dirname, "../../assets/oneroot_logo_email.png")
+  );
+} catch (err) {
+  console.warn("[EmailTracker] Email logo missing, falling back to 1x1 pixel:", err.message);
+}
 
 // 1x1 transparent GIF (43 bytes)
 const TRANSPARENT_1X1_GIF = Buffer.from(
@@ -183,26 +195,28 @@ async function recordHumanOpen(email, { now, ip, userAgent, inferredFromClick })
 }
 
 /**
- * GET /api/emails/track/o/:trackingId.gif
+ * GET /api/emails/track/o/:trackingId.png  -> visible signature logo (new emails)
+ * GET /api/emails/track/o/:trackingId.gif  -> 1x1 pixel (emails sent before the logo change)
  * GET /api/emails/track/open/:trackingId
- * Transparent 1x1 pixel. Only human opens are counted; scanner/prefetch hits are
- * logged with isBot=true for auditing but never mark the email as opened.
+ * Only human opens are counted; scanner/prefetch hits are logged with isBot=true
+ * for auditing but never mark the email as opened.
  */
 async function handlePixelOpen(req, res) {
-  const trackingId = String(req.params.trackingId || "")
-    .replace(/\.gif$/i, "")
-    .trim();
+  const raw = String(req.params.trackingId || "");
+  const wantsLogo = /\.png$/i.test(raw) && EMAIL_LOGO_PNG;
+  const trackingId = raw.replace(/\.(gif|png)$/i, "").trim();
+  const image = wantsLogo ? EMAIL_LOGO_PNG : TRANSPARENT_1X1_GIF;
 
   res.set({
-    "Content-Type": "image/gif",
-    "Content-Length": TRANSPARENT_1X1_GIF.length,
+    "Content-Type": wantsLogo ? "image/png" : "image/gif",
+    "Content-Length": image.length,
     "Cache-Control":
       "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0, post-check=0, pre-check=0",
     Pragma: "no-cache",
     Expires: "0",
     "Access-Control-Allow-Origin": "*",
   });
-  res.status(200).end(TRANSPARENT_1X1_GIF);
+  res.status(200).end(image);
 
   if (!trackingId) return;
 

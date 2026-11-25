@@ -150,6 +150,9 @@ const leadSchema = new mongoose.Schema(
     /** The status this lead had before the pipeline was renamed — its backup. */
     legacyStatus: { type: String, trim: true },
     remarks: [remarkSchema],
+    // Free-form labels shared with the linked importer (two-way sync).
+    // No default: a lead that never had tags is told apart from one cleared on purpose.
+    tags: { type: [{ type: String, trim: true }], default: undefined },
     documents: [documentSchema],
     outreachLog: {
       date: { type: String, trim: true },

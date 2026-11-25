@@ -1,4 +1,5 @@
 const express = require("express");
+const { normalizeTags } = require("../lib/tags");
 const mongoose = require("mongoose");
 const { Readable } = require("stream");
 const Lead = require("../models/Lead");
@@ -153,6 +154,7 @@ function normalizeLeadBody(body) {
   }
   delete data.pipelineStatus;
   delete data.legacyStatus;
+  if (data.tags !== undefined) data.tags = normalizeTags(data.tags);
   const company = String(data.company || "").trim();
 
   let contacts = normalizeContactsList(data.contacts);

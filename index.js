@@ -116,7 +116,11 @@ async function start() {
     // the server was down or written by migrations).
     const leadSync = require("./src/services/leadImporterSync");
     leadSync
-      .syncAllLeads()
+      // First copy existing importer tags onto their leads, so two-way tag sync
+      // never wipes tags.
+      .backfillLeadTags()
+      .then((r) => console.log("[LeadSync] Tag backfill:", JSON.stringify(r)))
+      .then(() => leadSync.syncAllLeads())
       .then(({ stats }) => console.log("[LeadSync] Startup catch-up:", JSON.stringify(stats)))
       // Importers added by CSV / manually get an export lead (owner: admin)
       .then(() => leadSync.linkAllImporters())

@@ -123,27 +123,7 @@ function pickImporterFields(body) {
   };
 }
 
-const MAX_TAGS = 20;
-const MAX_TAG_LENGTH = 40;
-
-/**
- * Clean a tags array from the client: trim, collapse spaces, drop empties,
- * dedupe case-insensitively (first spelling wins), cap count and length.
- */
-function normalizeTags(raw) {
-  if (!Array.isArray(raw)) return [];
-  const seen = new Set();
-  const out = [];
-  for (const t of raw) {
-    const tag = String(t ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_TAG_LENGTH);
-    const key = tag.toLowerCase();
-    if (!tag || seen.has(key)) continue;
-    seen.add(key);
-    out.push(tag);
-    if (out.length >= MAX_TAGS) break;
-  }
-  return out;
-}
+const { normalizeTags } = require("../lib/tags");
 
 const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 

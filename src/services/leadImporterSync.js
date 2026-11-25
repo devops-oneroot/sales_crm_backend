@@ -31,6 +31,7 @@ const Importer = require("../models/Importer");
 const User = require("../models/User");
 const { toCurrentStatus, isCurrentStatus } = require("../lib/leadStatuses");
 const { normalizeDomain } = require("../lib/importerProvenance");
+const { normalizeTags, sameTags } = require("../lib/tags");
 
 // Placeholder values older syncs invented when the lead had none.
 const OLD_SYNC_PLACEHOLDERS = {
@@ -153,8 +154,15 @@ async function syncLeadToImporterNow(lead, { dryRun = false } = {}) {
         incoterm: exp.incoterm || undefined,
         portOfDischarge: exp.portDelivery || undefined,
         paymentDays: num(exp.paymentDays),
+        state: exp.deliveryState || undefined,
+        city: exp.deliveryDistrict || undefined,
         responsiblePerson: lead.responsiblePerson || undefined,
       };
+      // Tags mirror exactly (including clearing) once the lead has a tags list.
+      if (Array.isArray(lead.tags) && !sameTags(lead.tags, existing.tags)) {
+        existing.tags = normalizeTags(lead.tags);
+        modified = true;
+      }
       for (const [key, placeholder] of Object.entries(OLD_SYNC_PLACEHOLDERS)) {
         if (fromLead[key] === undefined && existing[key] === placeholder) {
           existing[key] = undefined;
@@ -223,6 +231,7 @@ async function syncLeadToImporterNow(lead, { dryRun = false } = {}) {
     paymentTerms: exp.paymentDays ? `${exp.paymentDays} days credit` : "",
     paymentDays: num(exp.paymentDays),
     status: toCurrentStatus(lead.status, lead.pipelineStatus),
+    tags: normalizeTags(lead.tags),
     pipeline_status: "New",
     source_type: "manual",
     source_url: leadUrl,
@@ -349,6 +358,7 @@ async function ensureLeadForImporter(importer) {
     responsiblePerson: admin.name,
     createdBy: admin.id,
     status: salesStatusOfImporter(importer),
+    tags: normalizeTags(importer.tags),
     products: (importer.products || []).filter(Boolean).map((n) => ({ name: String(n).trim() })),
     exportDetails: {
       materialType: importer.materialType || undefined,
@@ -359,6 +369,8 @@ async function ensureLeadForImporter(importer) {
       incoterm: importer.incoterm || undefined,
       portDelivery: importer.portOfDischarge || undefined,
       paymentDays: num(importer.paymentDays),
+      deliveryState: importer.state || undefined,
+      deliveryDistrict: importer.city || undefined,
     },
   });
   console.log(`[LeadSync] Created export lead for importer "${name}" (owner: ${admin.name})`);
@@ -398,9 +410,37 @@ async function syncImporterToLeadNow(importer) {
     put("name", name, lead.name);
     put("company", name, lead.company);
   }
-  put("contactPerson", importer.contactPerson || "", lead.contactPerson);
-  put("email", (importer.email || "").toLowerCase(), lead.email);
-  put("phone", importer.importerNumber || "", lead.phone);
+  // The Leads tab keeps contact details in contacts[] and rebuilds the top-level
+  // fields from it on save, so update the first contact as well.
+  const impContact = {
+    name: importer.contactPerson || "",
+    email: (importer.email || "").toLowerCase(),
+    phone: importer.importerNumber || "",
+  };
+  const contacts = Array.isArray(lead.contacts) ? lead.contacts.map((c) => ({ ...c })) : [];
+  const first = contacts[0] || {};
+  const contactChanged =
+    !sameValue(impContact.name, first.name) ||
+    !sameValue(impContact.email, first.email) ||
+    !sameValue(impContact.phone, first.phone);
+  if (contactChanged && (impContact.name || impContact.email || impContact.phone || contacts.length)) {
+    const phones = Array.isArray(first.phones) ? [...first.phones] : [];
+    if (impContact.phone) {
+      const i = phones.findIndex((p) => p === first.phone);
+      if (i >= 0) phones[i] = impContact.phone;
+      else if (!phones.includes(impContact.phone)) phones.unshift(impContact.phone);
+    } else if (first.phone) {
+      const i = phones.indexOf(first.phone);
+      if (i >= 0) phones.splice(i, 1);
+    }
+    contacts[0] = { ...first, name: impContact.name, email: impContact.email, phone: impContact.phone, phones };
+    set.contacts = contacts;
+    set.contactPersons = contacts.map((c) => c.name).filter(Boolean);
+    set.emails = contacts.map((c) => c.email).filter(Boolean);
+  }
+  put("contactPerson", impContact.name, lead.contactPerson);
+  put("email", impContact.email, lead.email);
+  put("phone", impContact.phone, lead.phone);
   put("website", importer.website || "", lead.website);
   put("country", importer.country || "", lead.country);
   put("address", importer.address || "", lead.address);
@@ -415,6 +455,14 @@ async function syncImporterToLeadNow(importer) {
   put("exportDetails.incoterm", importer.incoterm || "", exp.incoterm);
   put("exportDetails.portDelivery", importer.portOfDischarge || "", exp.portDelivery);
   put("exportDetails.paymentDays", importer.paymentDays, exp.paymentDays);
+  put("exportDetails.deliveryState", importer.state || "", exp.deliveryState);
+  put("exportDetails.deliveryDistrict", importer.city || "", exp.deliveryDistrict);
+
+  // Tags mirror exactly. (A lead that never had tags gets the importer's.)
+  if (!sameTags(importer.tags, lead.tags) || !Array.isArray(lead.tags)) {
+    const next = normalizeTags(importer.tags);
+    if (!Array.isArray(lead.tags) || !sameTags(next, lead.tags)) set.tags = next;
+  }
 
   // Products: keep the lead's existing entries (with their qty/price) for names
   // still on the importer, add new names, drop removed ones.
@@ -493,6 +541,28 @@ function queueLeadSync(lead) {
   });
 }
 
+/**
+ * One-time: copy existing importer tags onto linked leads that have never had
+ * a tags list, so turning on two-way tag sync can't wipe any tags.
+ */
+async function backfillLeadTags() {
+  const Lead = require("../models/Lead");
+  const importers = await Importer.find({ "tags.0": { $exists: true } })
+    .select("tags source_url linked_lead_id")
+    .lean();
+  let copied = 0;
+  for (const imp of importers) {
+    const leadId = linkedLeadIdOf(imp);
+    if (!leadId) continue;
+    const r = await Lead.updateOne(
+      { _id: leadId, tags: { $exists: false } },
+      { $set: { tags: normalizeTags(imp.tags) } }
+    );
+    copied += r.modifiedCount;
+  }
+  return { importersWithTags: importers.length, copied };
+}
+
 /** Give every importer without a lead one (startup backfill). */
 async function linkAllImporters({ dryRun = false } = {}) {
   const unlinked = await Importer.find({
@@ -513,6 +583,7 @@ async function linkAllImporters({ dryRun = false } = {}) {
 }
 
 module.exports = {
+  backfillLeadTags,
   linkedLeadIdOf,
   importerLinkFilter,
   linkAllImporters,

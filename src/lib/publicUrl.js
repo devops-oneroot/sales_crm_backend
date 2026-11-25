@@ -11,6 +11,11 @@ const DEFAULT_PUBLIC_URL = "https://oneroot-crm-backend.onrender.com";
 const UNSUITABLE = /localhost|127\.0\.0\.1|0\.0\.0\.0|ngrok|\.loca\.lt|trycloudflare\.com/i;
 
 function getPublicBaseUrl() {
+  // Explicit override for local testing (e.g. an ngrok tunnel to this machine).
+  // Never set this in production.
+  const testOverride = String(process.env.EMAIL_LINK_BASE_URL_OVERRIDE || "").trim();
+  if (testOverride) return testOverride.replace(/\/+$/, "");
+
   const candidates = [
     process.env.PUBLIC_BACKEND_URL,
     process.env.OUTREACH_PUBLIC_URL,

@@ -19,6 +19,7 @@ const OutreachSettings = require("../models/OutreachSettings");
 const Suppression = require("../models/Suppression");
 const { canEnrollInOutreach } = require("../lib/importerProvenance");
 const R = require("../lib/outreachRules");
+const { getPublicBaseUrl } = require("../lib/publicUrl");
 const { getInboxes, sendMail } = require("./outreachMailer");
 
 const TICK_MS = 2 * 60 * 1000;
@@ -47,7 +48,7 @@ function hoursOf(s) {
 }
 
 function publicUrl() {
-  return (process.env.OUTREACH_PUBLIC_URL || process.env.API_PUBLIC_URL || "").trim().replace(/\/+$/, "");
+  return getPublicBaseUrl();
 }
 
 function unsubscribeUrl(importerId) {

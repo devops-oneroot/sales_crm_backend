@@ -349,11 +349,52 @@ function buildListQuery(req) {
   return { filter: leadFilter(req, extra), sortBy };
 }
 
+const MAX_PAGE_SIZE = 100;
+
+/**
+ * GET /api/leads
+ * - Without `page`: the full filtered list as an array (Activity board,
+ *   Importers pipeline, analytics, forms — unchanged).
+ * - With `page` (and optional `pageSize`, 1-100, default 10): one page,
+ *   as { items, total, page, pageSize, totalPages } — used by the Leads table.
+ * - `duplicates=1` limits to leads with an open possible-duplicate flag.
+ */
 router.get("/", async (req, res) => {
   try {
     const { filter, sortBy } = buildListQuery(req);
-    const leads = await Lead.find(filter).sort(sortBy);
-    res.json(await attachIdleInfo(leads.map(leadWithDocumentUrls)));
+
+    if (req.query.duplicates === "1") {
+      const { ids } = await require("../services/duplicateService").flaggedLeadIds();
+      filter.$and = [...(filter.$and || []), { _id: { $in: ids } }];
+    }
+
+    if (req.query.page === undefined) {
+      const leads = await Lead.find(filter).sort(sortBy);
+      return res.json(await attachIdleInfo(leads.map(leadWithDocumentUrls)));
+    }
+
+    const pageSize = Math.min(
+      MAX_PAGE_SIZE,
+      Math.max(1, parseInt(req.query.pageSize, 10) || 10)
+    );
+    const total = await Lead.countDocuments(filter);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    // Asking past the end (e.g. after a filter shrank the list) returns the last page.
+    const page = Math.min(totalPages, Math.max(1, parseInt(req.query.page, 10) || 1));
+
+    const leads = await Lead.find(filter)
+      // _id tiebreak keeps the order stable, so no lead repeats or vanishes between pages
+      .sort({ ...sortBy, _id: 1 })
+      .skip((page - 1) * pageSize)
+      .limit(pageSize);
+
+    res.json({
+      items: await attachIdleInfo(leads.map(leadWithDocumentUrls)),
+      total,
+      page,
+      pageSize,
+      totalPages,
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

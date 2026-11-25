@@ -57,6 +57,7 @@ app.get("/api/health", (_req, res) => {
 });
 
 app.use("/api/auth", authRouter);
+app.use("/api/duplicates", requireAuth, require("./src/routes/duplicates"));
 app.use("/api/leads", requireAuth, leadsRouter);
 app.use("/api/locations", requireAuth, locationsRouter);
 app.use("/api/team", requireAuth, teamRouter);
@@ -109,6 +110,25 @@ async function start() {
         `🚀 Sales CRM Server Connected Successfully on http://localhost:${PORT}`
       );
     });
+
+    // Catch up export leads → importers in the background (lead edits are
+    // mirrored live by Lead model hooks; this covers anything changed while
+    // the server was down or written by migrations).
+    const leadSync = require("./src/services/leadImporterSync");
+    leadSync
+      // First copy existing importer tags onto their leads, so two-way tag sync
+      // never wipes tags.
+      .backfillLeadTags()
+      .then((r) => console.log("[LeadSync] Tag backfill:", JSON.stringify(r)))
+      .then(() => leadSync.syncAllLeads())
+      .then(({ stats }) => console.log("[LeadSync] Startup catch-up:", JSON.stringify(stats)))
+      // Importers added by CSV / manually get an export lead (owner: admin)
+      .then(() => leadSync.linkAllImporters())
+      .then(({ stats }) => console.log("[LeadSync] Importers given a lead:", JSON.stringify(stats)))
+      // Flag possible duplicate leads (flags only — users decide what to do)
+      .then(() => require("./src/services/duplicateService").scanAll())
+      .then((r) => console.log("[Duplicates] Startup scan:", JSON.stringify(r)))
+      .catch((e) => console.warn("[LeadSync] Startup catch-up failed:", e.message));
   } catch (err) {
     console.error("❌ Failed to start server:", err.message);
     process.exit(1);

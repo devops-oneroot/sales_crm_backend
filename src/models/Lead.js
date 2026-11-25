@@ -150,6 +150,9 @@ const leadSchema = new mongoose.Schema(
     /** The status this lead had before the pipeline was renamed — its backup. */
     legacyStatus: { type: String, trim: true },
     remarks: [remarkSchema],
+    // Free-form labels shared with the linked importer (two-way sync).
+    // No default: a lead that never had tags is told apart from one cleared on purpose.
+    tags: { type: [{ type: String, trim: true }], default: undefined },
     documents: [documentSchema],
     outreachLog: {
       date: { type: String, trim: true },
@@ -164,5 +167,16 @@ const leadSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Export leads live in Importers too: mirror every create/edit automatically.
+// (Required lazily to avoid a circular import with the Importer model.)
+function mirrorToImporter(doc) {
+  if (!doc) return;
+  require("../services/leadImporterSync").queueLeadSync(doc);
+  // Re-check this lead for possible duplicates (flags only, never merges).
+  require("../services/duplicateService").queueScan(doc._id);
+}
+leadSchema.post("save", mirrorToImporter);
+leadSchema.post("findOneAndUpdate", mirrorToImporter);
 
 module.exports = mongoose.model("Lead", leadSchema);

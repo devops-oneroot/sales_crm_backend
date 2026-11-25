@@ -6,6 +6,9 @@ const Importer = require("../models/Importer");
 const User = require("../models/User");
 const Suppression = require("../models/Suppression");
 const { getInboxes, sendMail } = require("./outreachMailer");
+const R = require("../lib/outreachRules");
+const { getPublicBaseUrl } = require("../lib/publicUrl");
+const { isCurrentStatus: isSalesStatus } = require("../lib/leadStatuses");
 
 // Pre-defined export business templates with dynamic merge fields
 const EMAIL_TEMPLATES = [
@@ -308,22 +311,17 @@ async function getEmailsForImporter(importerId) {
  * Resolves the public server URL for tracking pixel & link clicks
  */
 function getTrackingBaseUrl() {
-  const envUrl =
-    process.env.PUBLIC_BACKEND_URL ||
-    process.env.OUTREACH_PUBLIC_URL ||
-    process.env.BACKEND_URL;
-  if (envUrl && envUrl.trim()) {
-    return envUrl.trim().replace(/\/+$/, "");
-  }
-  return "https://oneroot-crm-backend.onrender.com";
+  return getPublicBaseUrl();
 }
+
+const UNSUBSCRIBE_TEXT = "If you'd prefer not to hear from us, unsubscribe here:";
 
 /**
  * Builds HTML email body with:
  * 1. Mailchimp-style 1x1 invisible tracking pixel
  * 2. Click tracking link wrapping for inferred opens
  */
-function buildHtmlWithTracking(textBody, trackingId, baseUrl) {
+function buildHtmlWithTracking(textBody, trackingId, baseUrl, unsubscribeUrl = "") {
   // Escape HTML characters
   const escaped = textBody
     .replace(/&/g, "&amp;")
@@ -346,14 +344,11 @@ function buildHtmlWithTracking(textBody, trackingId, baseUrl) {
     return `<a href="${trackUrl}" style="color: #4f46e5; text-decoration: underline;" target="_blank" rel="noopener noreferrer">${url}</a>`;
   });
 
-  // Mailchimp Step 1: 1x1 transparent tracking pixel
-  const pixelUrl = `${baseUrl}/api/emails/track/o/${trackingId}.gif`;
-  const trackingPixel = `<img src="${pixelUrl}" width="1" height="1" border="0" alt="" style="display:none!important;width:1px!important;height:1px!important;border:0!important;margin:0!important;padding:0!important;opacity:0!important;" />`;
-
-  // Honeypot link: invisible to humans, but security scanners follow every href.
-  // A hit here identifies the scanner's IP so its pixel/link hits are discarded.
-  const honeypotUrl = `${baseUrl}/api/emails/track/h/${trackingId}`;
-  const honeypot = `<div style="display:none!important;max-height:0;overflow:hidden;mso-hide:all;font-size:0;line-height:0;" aria-hidden="true"><a href="${honeypotUrl}" tabindex="-1" style="display:none!important;color:transparent;">&#8203;</a></div>`;
+  // Open tracking via a visible signature logo. Hidden/1x1 images and hidden links
+  // are flagged by Outlook as tracking content and push mail to Junk, so nothing
+  // in the email is hidden.
+  const logoUrl = `${baseUrl}/api/emails/track/o/${trackingId}.png`;
+  const signatureLogo = `<p style="margin: 24px 0 0 0;"><img src="${logoUrl}" width="140" height="55" alt="OneRoot" style="display:block;width:140px;height:auto;border:0;" /></p>`;
 
   return `<!DOCTYPE html>
 <html>
@@ -364,8 +359,13 @@ function buildHtmlWithTracking(textBody, trackingId, baseUrl) {
 <body style="margin: 0; padding: 20px; background-color: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;">
   <div style="max-width: 600px; margin: 0 auto;">
     ${wrappedParagraphs}
-    ${trackingPixel}
-    ${honeypot}
+    ${signatureLogo}
+    ${
+      unsubscribeUrl
+        ? `<hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 8px;" />
+    <p style="margin:0;font-size:12px;color:#64748b;font-family:Arial,Helvetica,sans-serif;">If you'd prefer not to hear from us, <a href="${unsubscribeUrl}" style="color:#64748b;">unsubscribe here</a>.</p>`
+        : ""
+    }
   </div>
 </body>
 </html>`;
@@ -433,17 +433,25 @@ async function sendEmailReply({
   // Generate Mailchimp-grade tracking ID & HTML body
   const trackingId = crypto.randomBytes(16).toString("hex");
   const trackingBaseUrl = getTrackingBaseUrl();
-  const htmlBody = buildHtmlWithTracking(body.trim(), trackingId, trackingBaseUrl);
+  // Unsubscribe link + one-click header (same token/route as the outreach sequence)
+  const unsubscribeUrl = `${trackingBaseUrl}/api/outreach/unsubscribe/${R.makeUnsubscribeToken(importer._id)}`;
+  const htmlBody = buildHtmlWithTracking(body.trim(), trackingId, trackingBaseUrl, unsubscribeUrl);
+  const textBody = `${body.trim()}\n\n--\n${UNSUBSCRIBE_TEXT} ${unsubscribeUrl}`;
+  const unsubscribeHeaders = {
+    "List-Unsubscribe": `<${unsubscribeUrl}>, <mailto:${inbox?.email || "exports@oneroot.farm"}?subject=unsubscribe>`,
+    "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+  };
 
   if (inbox && inbox.smtp && inbox.smtp.host) {
     try {
       const result = await sendMail(inbox, {
         to: recipientEmail,
         subject: subject.trim(),
-        text: body.trim(),
+        text: textBody,
         html: htmlBody,
         inReplyTo: parentId,
         references,
+        headers: unsubscribeHeaders,
         attachments,
       });
       messageId = result.messageId;
@@ -497,7 +505,6 @@ async function sendEmailReply({
     importer.pipeline_status === "Verified"
   ) {
     importer.pipeline_status = "Emailed";
-    importer.status = "Emailed";
     importer.email_1_sent_at = new Date();
     importer.timeline = importer.timeline || [];
     importer.timeline.push({
@@ -506,11 +513,13 @@ async function sendEmailReply({
       changed_by: userName || "Sales Rep",
       timestamp: new Date(),
     });
-    await importer.save();
-  } else if (importer.status === "lead_generation") {
-    importer.status = "contact_established";
-    await importer.save();
   }
+  // Sales stage: the first email moves a fresh lead to "Contact Established".
+  // Later stages are only ever set by a person.
+  if (!importer.status || importer.status === "lead_generation" || !isSalesStatus(importer.status)) {
+    importer.status = "contact_established";
+  }
+  if (importer.isModified()) await importer.save();
 
   console.log(
     `[EmailService] 📤 Outbound email delivered to ${recipientEmail} regarding "${subject}" (Stored in CRM thread)`

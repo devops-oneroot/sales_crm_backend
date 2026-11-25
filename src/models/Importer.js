@@ -151,6 +151,11 @@ const importerSchema = new mongoose.Schema(
     paymentTerms: { type: String, trim: true },
     paymentDays: { type: Number, min: 0 },
     remarks: { type: String, trim: true },
+    // Lead this importer is mirrored with (for importers not created from a lead,
+    // e.g. CSV import / manual entry). Lead-created importers link via source_url.
+    linked_lead_id: { type: mongoose.Schema.Types.ObjectId, ref: "Lead", index: true },
+    // Free-form, user-defined labels (e.g. "Focus", "Active") for segmenting the pipeline
+    tags: { type: [{ type: String, trim: true }], default: [], index: true },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -183,12 +188,9 @@ importerSchema.pre("validate", function () {
   }
 });
 
-// Keep legacy status synchronized with pipeline_status
-importerSchema.pre("save", function () {
-  if (this.pipeline_status && this.status !== this.pipeline_status) {
-    this.status = this.pipeline_status;
-  }
-});
+// Note: `status` (sales stage, set by a person) and `pipeline_status` (outreach
+// tracking, set by the system) are independent. A hook used to copy
+// pipeline_status over status on every save, which erased the user's choice.
 
 importerSchema.index({
   importerName: "text",
@@ -207,5 +209,14 @@ importerSchema.index(
     partialFilterExpression: { website_domain: { $type: "string", $gt: "" } },
   }
 );
+
+// Importers created from a lead push user edits back to that lead (two-way sync).
+// Saves made by the lead->importer sync are flagged and skipped to avoid loops.
+// (Required lazily to avoid a circular import with the sync service.)
+function mirrorToLead(doc) {
+  if (doc) require("../services/leadImporterSync").queueImporterSync(doc);
+}
+importerSchema.post("save", mirrorToLead);
+importerSchema.post("findOneAndUpdate", mirrorToLead);
 
 module.exports = mongoose.model("Importer", importerSchema);

@@ -82,7 +82,19 @@ async function connectDB(maxRetries = 5, retryDelayMs = 3000) {
         `⚠️ [MongoDB] Connection attempt ${attempt}/${maxRetries} failed: ${err.message}`
       );
       if (attempt >= maxRetries) throw err;
-      if (uri.startsWith("mongodb+srv://")) ensureUsableDnsServers();
+      if (uri.startsWith("mongodb+srv://")) {
+        // Some networks (phone hotspots, some routers) refuse SRV lookups
+        // outright; Node does not fall through to the next resolver on a
+        // refusal, so switch to public resolvers only for the retry.
+        if (/querySrv|ENOTFOUND|ECONNREFUSED|ETIMEOUT|EREFUSED/i.test(err.message)) {
+          try {
+            dns.setServers(FALLBACK_DNS);
+            console.warn(`DNS: SRV lookup failed — retrying with ${FALLBACK_DNS.join(", ")}`);
+          } catch {}
+        } else {
+          ensureUsableDnsServers();
+        }
+      }
       await new Promise((r) => setTimeout(r, retryDelayMs));
     }
   }

@@ -191,7 +191,6 @@ async function verifyImporters({ ids = null, staleDays = 30, userName = "System"
           // Verified A/B leads move New → Verified on the pipeline.
           if (emailStatus === "verified" && (grade === "A" || grade === "B") && (!imp.pipeline_status || imp.pipeline_status === "New")) {
             set.pipeline_status = "Verified";
-            set.status = "Verified";
             push.push({ status: "Verified", note: `Passed verification (grade ${grade})`, changed_by: userName, timestamp: new Date() });
           }
           await Importer.updateOne({ _id: imp._id }, { $set: set, $push: { timeline: { $each: push } } });

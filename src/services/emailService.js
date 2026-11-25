@@ -8,6 +8,7 @@ const Suppression = require("../models/Suppression");
 const { getInboxes, sendMail } = require("./outreachMailer");
 const R = require("../lib/outreachRules");
 const { getPublicBaseUrl } = require("../lib/publicUrl");
+const { isCurrentStatus: isSalesStatus } = require("../lib/leadStatuses");
 
 // Pre-defined export business templates with dynamic merge fields
 const EMAIL_TEMPLATES = [
@@ -504,7 +505,6 @@ async function sendEmailReply({
     importer.pipeline_status === "Verified"
   ) {
     importer.pipeline_status = "Emailed";
-    importer.status = "Emailed";
     importer.email_1_sent_at = new Date();
     importer.timeline = importer.timeline || [];
     importer.timeline.push({
@@ -513,11 +513,13 @@ async function sendEmailReply({
       changed_by: userName || "Sales Rep",
       timestamp: new Date(),
     });
-    await importer.save();
-  } else if (importer.status === "lead_generation") {
-    importer.status = "contact_established";
-    await importer.save();
   }
+  // Sales stage: the first email moves a fresh lead to "Contact Established".
+  // Later stages are only ever set by a person.
+  if (!importer.status || importer.status === "lead_generation" || !isSalesStatus(importer.status)) {
+    importer.status = "contact_established";
+  }
+  if (importer.isModified()) await importer.save();
 
   console.log(
     `[EmailService] 📤 Outbound email delivered to ${recipientEmail} regarding "${subject}" (Stored in CRM thread)`

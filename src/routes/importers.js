@@ -2,7 +2,7 @@ const express = require("express");
 const Importer = require("../models/Importer");
 const Lead = require("../models/Lead");
 const User = require("../models/User");
-const { toCurrentStatus } = require("../lib/leadStatuses");
+const { toCurrentStatus, isCurrentStatus, isLegacyStatus } = require("../lib/leadStatuses");
 const {
   runTurmericImporterScraper,
   getScraperStatus,
@@ -20,6 +20,7 @@ const discoveryRouter = require("./discovery");
 const { enrichImporterContacts } = require("../services/contactEnrichment");
 const { verifyImporters, verifierConfig } = require("../services/verificationService");
 const outreachEngine = require("../services/outreachEngine");
+const { syncAllLeads } = require("../services/leadImporterSync");
 
 const router = express.Router();
 router.use("/discovery", discoveryRouter);
@@ -55,7 +56,7 @@ function pickImporterFields(body) {
     email: body.email ? String(body.email).trim().toLowerCase() : "",
     website,
     website_domain,
-    country: body.country ? String(body.country).trim() : "United States",
+    country: body.country ? String(body.country).trim() : "",
     state: body.state ? String(body.state).trim() : "",
     city: body.city ? String(body.city).trim() : "",
     address: body.address ? String(body.address).trim() : "",
@@ -114,11 +115,37 @@ function pickImporterFields(body) {
         ? Number(body.paymentDays)
         : undefined,
     remarks: body.remarks ? String(body.remarks).trim() : "",
+    tags: normalizeTags(body.tags),
     responsiblePerson: body.responsiblePerson ? String(body.responsiblePerson).trim() : "",
     followUpDate: body.followUpDate ? new Date(body.followUpDate) : null,
-    status: body.pipeline_status || toCurrentStatus(body.status),
+    // Sales stage picked by the user. Independent of pipeline_status (outreach tracking).
+    status: toCurrentStatus(body.status),
   };
 }
+
+const MAX_TAGS = 20;
+const MAX_TAG_LENGTH = 40;
+
+/**
+ * Clean a tags array from the client: trim, collapse spaces, drop empties,
+ * dedupe case-insensitively (first spelling wins), cap count and length.
+ */
+function normalizeTags(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const t of raw) {
+    const tag = String(t ?? "").replace(/\s+/g, " ").trim().slice(0, MAX_TAG_LENGTH);
+    const key = tag.toLowerCase();
+    if (!tag || seen.has(key)) continue;
+    seen.add(key);
+    out.push(tag);
+    if (out.length >= MAX_TAGS) break;
+  }
+  return out;
+}
+
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * Manual entry is a legitimate source: the user is the source. Stamp who entered it
@@ -160,7 +187,7 @@ const UNVERIFIED_DEFAULTS = {
 const PATCH_ALIASES = {
   importerName: ["importerName", "name", "companyName"],
   importerNumber: ["importerNumber", "phone"],
-  status: ["status", "pipeline_status"],
+  status: ["status"],
 };
 
 /** Keep only fields the client actually sent, and never provenance fields. */
@@ -180,11 +207,36 @@ function pickPatchFields(body) {
   return out;
 }
 
+/**
+ * Older records had their sales status overwritten with the outreach
+ * pipeline value ("Emailed", "Replied"...). Map those to the nearest sales
+ * stage until a person sets one.
+ */
+const PIPELINE_TO_SALES_STATUS = {
+  New: "lead_generation",
+  Verified: "lead_generation",
+  Emailed: "contact_established",
+  "Followed up": "contact_established",
+  "LinkedIn sent": "contact_established",
+  Replied: "requirement_understood",
+  "Sample sent": "quotation_sent",
+  Negotiation: "quotation_sent",
+  Order: "closed_won",
+  Lost: "closed_lost",
+};
+
+function salesStatusOf(o) {
+  if (isCurrentStatus(o.status)) return o.status;
+  if (PIPELINE_TO_SALES_STATUS[o.status]) return PIPELINE_TO_SALES_STATUS[o.status];
+  if (isLegacyStatus(o.status)) return toCurrentStatus(o.status, o.pipelineStatus);
+  return PIPELINE_TO_SALES_STATUS[o.pipeline_status] || toCurrentStatus(o.status, o.pipelineStatus);
+}
+
 function importerToResponse(doc) {
   const o = doc.toObject ? doc.toObject() : { ...doc };
   return {
     ...o,
-    status: o.pipeline_status || toCurrentStatus(o.status, o.pipelineStatus),
+    status: salesStatusOf(o),
     pipeline_status: o.pipeline_status || "New",
   };
 }
@@ -226,6 +278,40 @@ router.get("/", async (req, res) => {
 });
 
 // GET scraper status & schedule
+/**
+ * GET /importers/tags — every tag in use, with how many importers carry it.
+ * Feeds tag suggestions and the pipeline tag filter.
+ */
+router.get("/tags", async (_req, res) => {
+  try {
+    const rows = await Importer.aggregate([
+      { $unwind: "$tags" },
+      { $group: { _id: { $toLower: "$tags" }, tag: { $first: "$tags" }, count: { $sum: 1 } } },
+      { $sort: { count: -1, tag: 1 } },
+    ]);
+    res.json({ success: true, data: rows.map((r) => ({ tag: r.tag, count: r.count })) });
+  } catch (err) {
+    console.error("[Importers] tag list error:", err.message);
+    res.status(500).json({ success: false, message: "Could not load tags" });
+  }
+});
+
+/**
+ * DELETE /importers/tags/:tag — remove a tag from every importer (case-insensitive).
+ */
+router.delete("/tags/:tag", async (req, res) => {
+  try {
+    const tag = String(req.params.tag || "").trim();
+    if (!tag) return res.status(400).json({ success: false, message: "Tag is required" });
+    const re = new RegExp(`^${escapeRegex(tag)}$`, "i");
+    const result = await Importer.updateMany({ tags: re }, { $pull: { tags: re } });
+    res.json({ success: true, data: { tag, removedFrom: result.modifiedCount } });
+  } catch (err) {
+    console.error("[Importers] tag delete error:", err.message);
+    res.status(500).json({ success: false, message: "Could not remove tag" });
+  }
+});
+
 router.get("/scraper-status", async (_req, res) => {
   try {
     const status = await getScraperStatus();
@@ -278,166 +364,21 @@ router.get("/verification/status", async (_req, res) => {
 });
 
 // POST sync export leads from Leads tab into Importers pipeline
+// POST /importers/sync-leads — manual catch-up (?dryRun=1 to preview).
+// Normally not needed: export leads are mirrored automatically on every edit.
 router.post("/sync-leads", async (req, res) => {
+  const dryRun = req.query.dryRun === "1" || req.body?.dryRun === true;
   try {
-    const creator = await User.findById(req.userId).select("name role");
-    const adminUser = await User.findOne({ role: "admin" }).select("_id name");
-    const fallbackUserId = req.userId || adminUser?._id;
-    const fallbackUserName = creator?.name || adminUser?.name || "System";
-
-    // Find export leads (or any leads explicitly marked as export)
-    const leads = await Lead.find({ leadType: "export" }).lean();
-    if (!leads.length) {
-      return res.json({
-        success: true,
-        message: "No export leads found to sync.",
-        stats: { totalFound: 0, created: 0, updated: 0, skipped: 0 },
-      });
-    }
-
-    let created = 0;
-    let updated = 0;
-    let skipped = 0;
-
-    for (const lead of leads) {
-      const compName = String(lead.company || lead.name || "").trim();
-      if (!compName) {
-        skipped++;
-        continue;
-      }
-
-      const contactPerson = String(
-        lead.contactPerson ||
-        lead.contacts?.[0]?.name ||
-        ""
-      ).trim();
-
-      const email = String(
-        lead.email ||
-        lead.emails?.[0] ||
-        lead.contacts?.find((c) => c.email)?.email ||
-        ""
-      ).trim().toLowerCase();
-
-      const phone = String(
-        lead.phone ||
-        lead.whatsappNumber ||
-        lead.whatsappNumbers?.[0] ||
-        lead.contacts?.[0]?.phone ||
-        lead.contacts?.[0]?.phones?.[0] ||
-        ""
-      ).trim();
-
-      const website = lead.website ? String(lead.website).trim() : "";
-      const website_domain = website ? normalizeDomain(website) : "";
-
-      // Deduplication: Match by company name OR email OR website_domain OR source_url
-      const orConditions = [
-        { importerName: new RegExp(`^${compName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
-        { source_url: `manual://lead/${lead._id}` },
-      ];
-      if (email) orConditions.push({ email });
-      if (website_domain) orConditions.push({ website_domain });
-
-      const existing = await Importer.findOne({ $or: orConditions });
-
-      if (existing) {
-        let modified = false;
-        if (!existing.email && email) {
-          existing.email = email;
-          modified = true;
-        }
-        if (!existing.importerNumber && phone) {
-          existing.importerNumber = phone;
-          modified = true;
-        }
-        if (!existing.contactPerson && contactPerson) {
-          existing.contactPerson = contactPerson;
-          modified = true;
-        }
-        if (!existing.country && lead.country) {
-          existing.country = lead.country;
-          modified = true;
-        }
-        if (modified) {
-          await existing.save();
-          updated++;
-        } else {
-          skipped++;
-        }
-      } else {
-        let products = [];
-        if (Array.isArray(lead.products) && lead.products.length) {
-          products = lead.products.map((p) => (typeof p === "string" ? p : p.name)).filter(Boolean);
-        }
-        if (!products.length && lead.exportDetails?.materialType) {
-          products = [lead.exportDetails.materialType];
-        }
-        if (!products.length) {
-          products = ["Turmeric"];
-        }
-
-        let pipeline_status = "New";
-        const st = String(lead.status || "").toLowerCase();
-        if (st.includes("contact") || st.includes("established")) {
-          pipeline_status = "Verified";
-        } else if (st.includes("quotation") || st.includes("sample")) {
-          pipeline_status = "Sample sent";
-        } else if (st.includes("order")) {
-          pipeline_status = "Order";
-        } else if (st.includes("lost")) {
-          pipeline_status = "Lost";
-        }
-
-        await Importer.create({
-          importerName: compName,
-          companyName: compName,
-          contactPerson,
-          importerNumber: phone,
-          email,
-          website,
-          website_domain,
-          country: lead.country || "Global",
-          state: lead.exportDetails?.deliveryState || "",
-          city: lead.exportDetails?.deliveryDistrict || "",
-          address: lead.address || "",
-          products,
-          materialType: lead.exportDetails?.materialType || "Export Grade Turmeric",
-          curcuminPercent: Number(lead.exportDetails?.minCurcumin) || 3.5,
-          polishLevel: lead.exportDetails?.polishLevel || "Double Polished",
-          quantityKg: Number(lead.exportDetails?.quantityNeededKg) || 25000,
-          price: Number(lead.exportDetails?.maxPrice) || 155,
-          incoterm: lead.exportDetails?.incoterm || "CIF",
-          portOfDischarge: lead.exportDetails?.portDelivery || "",
-          paymentTerms: lead.exportDetails?.paymentDays ? `${lead.exportDetails.paymentDays} days credit` : "30% Advance, 70% BL scan",
-          pipeline_status,
-          source_type: "manual",
-          source_url: `manual://lead/${lead._id}`,
-          fetched_at: lead.createdAt || new Date(),
-          createdBy: lead.createdBy || fallbackUserId,
-          responsiblePerson: lead.responsiblePerson || fallbackUserName,
-          timeline: [
-            {
-              status: "Created",
-              note: `Synced from Export Leads database (Lead ID: ${lead._id})`,
-              changed_by: fallbackUserName,
-              timestamp: new Date(),
-            },
-          ],
-        });
-        created++;
-      }
-    }
-
+    const { stats, failed } = await syncAllLeads({ dryRun });
     res.json({
       success: true,
-      message: `Sync complete: ${created} new buyers added, ${updated} enriched, ${skipped} already up to date.`,
-      stats: {
-        totalFound: leads.length,
-        created,
-        updated,
-        skipped,
-      },
+      dryRun,
+      message:
+        (dryRun ? "[Dry run — nothing saved] " : "") +
+        `Sync complete: ${stats.created} added, ${stats.updated} updated, ${stats.unchanged} already up to date` +
+        (stats.failed ? `, ${stats.failed} could not be synced.` : "."),
+      stats,
+      failed: failed.slice(0, 50),
     });
   } catch (err) {
     console.error("[SyncLeads] Error:", err);

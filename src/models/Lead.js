@@ -165,4 +165,15 @@ const leadSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Export leads live in Importers too: mirror every create/edit automatically.
+// (Required lazily to avoid a circular import with the Importer model.)
+function mirrorToImporter(doc) {
+  if (!doc) return;
+  require("../services/leadImporterSync").queueLeadSync(doc);
+  // Re-check this lead for possible duplicates (flags only, never merges).
+  require("../services/duplicateService").queueScan(doc._id);
+}
+leadSchema.post("save", mirrorToImporter);
+leadSchema.post("findOneAndUpdate", mirrorToImporter);
+
 module.exports = mongoose.model("Lead", leadSchema);

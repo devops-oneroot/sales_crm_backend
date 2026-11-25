@@ -324,7 +324,7 @@ async function tick({ now = new Date() } = {}) {
 
         if (step === 1) {
           const followUp = R.scheduleFollowUp(sentAt, imp.outreach_wait_hours || settings.wait_hours, tz, hours);
-          const pipelineMove = ["New", "Verified"].includes(imp.pipeline_status) ? { pipeline_status: "Emailed", status: "Emailed" } : {};
+          const pipelineMove = ["New", "Verified"].includes(imp.pipeline_status) ? { pipeline_status: "Emailed" } : {};
           await Importer.updateOne(
             { _id: imp._id },
             {
@@ -467,7 +467,6 @@ async function handleInbound(parsed, inbox, ownAddresses, summary) {
     await stopSequence(imp._id, "replied", `Buyer replied: "${(parsed.subject || "").slice(0, 80)}" — sequence stopped`, {
       reply_detected_at: new Date(),
       pipeline_status: "Replied",
-      status: "Replied",
     });
     summary.replies++;
   } else if (kind === "bounce") {

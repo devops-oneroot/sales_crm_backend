@@ -16,7 +16,7 @@ const EmailMessage = require("../models/EmailMessage");
 const Activity = require("../models/Activity");
 const LeadDuplicate = require("../models/LeadDuplicate");
 const ArchivedRecord = require("../models/ArchivedRecord");
-const { leadMatchKeys, leadBook } = require("../lib/duplicateMatching");
+const { leadMatchKeys, leadBook, phoneKey, emailKey, domainKey, smartCompanyKey } = require("../lib/duplicateMatching");
 const { importerLinkFilter } = require("./leadImporterSync");
 
 const MATCH_FIELDS =
@@ -128,7 +128,47 @@ function queueScan(leadId) {
 // ------------------------------------------------------------------ listing
 
 const LEAD_SUMMARY =
-  "name company contactPerson phone whatsappNumber email website country status responsiblePerson leadType createdAt updatedAt products exportDetails";
+  "name company contactPerson phone whatsappNumber whatsappNumbers contacts email emails website country status responsiblePerson leadType createdAt updatedAt products exportDetails";
+
+/**
+ * Exactly which values the two leads share, in readable form, e.g.
+ * { kind: "phone", value: "312456y8987654", where: ["WhatsApp", "Phone"] }.
+ */
+function sharedValues(a, b) {
+  const sources = (lead) => {
+    const out = [];
+    const add = (kind, raw, where, keyFn) => {
+      const key = keyFn(raw);
+      if (key) out.push({ kind, key, raw: String(raw).trim(), where });
+    };
+    add("name", lead.company, "Company", smartCompanyKey);
+    add("name", lead.name, "Name", smartCompanyKey);
+    add("phone", lead.phone, "Phone", phoneKey);
+    (lead.whatsappNumbers || [lead.whatsappNumber]).forEach((n) => add("phone", n, "WhatsApp", phoneKey));
+    (lead.contacts || []).forEach((c, i) => {
+      [c?.phone, ...(c?.phones || [])].forEach((n) => add("phone", n, `Contact ${i + 1} phone`, phoneKey));
+      add("email", c?.email, `Contact ${i + 1} email`, emailKey);
+    });
+    add("email", lead.email, "Email", emailKey);
+    (lead.emails || []).forEach((e) => add("email", e, "Email", emailKey));
+    add("website", lead.website, "Website", domainKey);
+    return out;
+  };
+  const sa = sources(a);
+  const sb = sources(b);
+  const seen = new Set();
+  const shared = [];
+  for (const x of sa) {
+    const y = sb.find((v) => v.kind === x.kind && v.key === x.key);
+    const id = `${x.kind}|${x.key}`;
+    if (!y || seen.has(id)) continue;
+    seen.add(id);
+    const whereA = [...new Set(sa.filter((v) => v.kind === x.kind && v.key === x.key).map((v) => v.where))];
+    const whereB = [...new Set(sb.filter((v) => v.kind === x.kind && v.key === x.key).map((v) => v.where))];
+    shared.push({ kind: x.kind, valueA: x.raw, valueB: y.raw, whereA, whereB });
+  }
+  return shared;
+}
 
 async function importerSummary(leadId) {
   const imp = await Importer.findOne(importerLinkFilter(leadId))
@@ -154,9 +194,15 @@ async function listOpen() {
       orphaned.push(p._id); // one side was deleted elsewhere
       continue;
     }
+    const matches = sharedValues(a, b);
+    if (!matches.length || leadBook(a) !== leadBook(b)) {
+      orphaned.push(p._id); // edited since it was flagged — no longer a match
+      continue;
+    }
     out.push({
       _id: p._id,
-      reasons: p.reasons,
+      reasons: [...new Set(matches.map((x) => x.kind))],
+      matches,
       createdAt: p.createdAt,
       leads: [
         { ...a, importer: await importerSummary(a._id) },

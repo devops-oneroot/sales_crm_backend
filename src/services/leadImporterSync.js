@@ -487,6 +487,8 @@ async function syncImporterToLeadNow(importer) {
   if (Object.keys(unset).length) update.$unset = unset;
   // updateOne does not fire the Lead hooks, so this can't bounce back.
   await Lead.updateOne({ _id: lead._id }, update, { runValidators: true });
+  // updateOne skips the Lead hooks, so re-check duplicates explicitly.
+  require("./duplicateService").queueScan(lead._id);
   return "updated";
 }
 

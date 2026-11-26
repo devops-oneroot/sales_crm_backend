@@ -21,6 +21,7 @@ const importerSchema = new mongoose.Schema(
     website: { type: String, trim: true },
     country: { type: String, trim: true, default: "United States" },
     state: { type: String, trim: true },
+    postalCode: { type: String, trim: true }, // pincode / ZIP (synced with the lead)
     city: { type: String, trim: true },
     address: { type: String, trim: true },
 

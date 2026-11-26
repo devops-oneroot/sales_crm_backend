@@ -19,7 +19,7 @@ const {
 } = require("../config/cloudinary");
 
 const { enforceExportLeadBody } = require("../lib/adminScope");
-const { applyResponsiblePersonPatch, findSalesUserByName } = require("../lib/leadAssign");
+const { applyResponsiblePersonPatch, findAssignableUser } = require("../lib/leadAssign");
 const { todayBusinessDate, BUSINESS_TZ } = require("../lib/businessDate");
 const { applyFollowUpLog } = require("../lib/outreachTouch");
 const { companyNamesMatch } = require("../lib/companyNameNormalize");
@@ -293,11 +293,23 @@ function searchClause(term) {
       { emails: rx },
       { responsiblePerson: rx },
       { country: rx },
+      { stateProvince: rx },
+      { city: rx },
+      { postalCode: rx },
+      { "exportDetails.deliveryState": rx },
+      { "exportDetails.deliveryDistrict": rx },
+      { "exportDetails.deliveryPincode": rx },
       { "contacts.name": rx },
       { "contacts.email": rx },
     ],
   };
 }
+
+const LOCATION_FIELDS = {
+  state: ["stateProvince", "exportDetails.deliveryState"],
+  city: ["city", "exportDetails.deliveryDistrict"],
+  pincode: ["postalCode", "exportDetails.deliveryPincode"],
+};
 
 /** Builds the list query from the table's filters. Absent filters are ignored. */
 function buildListQuery(req) {
@@ -326,6 +338,23 @@ function buildListQuery(req) {
 
   const search = searchClause(req.query.search);
   if (search) and.push(search);
+
+  // Location filters. Export leads keep location in stateProvince / city /
+  // postalCode, domestic leads in exportDetails.delivery*; match either.
+  for (const [param, fields] of Object.entries(LOCATION_FIELDS)) {
+    const value = String(req.query[param] || "").trim();
+    if (!value || value === "all") continue;
+    const rx = new RegExp(`^${escapeForRegex(value)}$`, "i");
+    and.push({ $or: fields.map((f) => ({ [f]: rx })) });
+  }
+
+  // Tag filter: "__none__" = leads without tags; otherwise exact tag, any case.
+  const tag = String(req.query.tag || "").trim();
+  if (tag === "__none__") {
+    and.push({ $or: [{ tags: { $exists: false } }, { tags: { $size: 0 } }] });
+  } else if (tag && tag !== "all") {
+    extra.tags = new RegExp(`^${escapeForRegex(tag)}$`, "i");
+  }
 
   const dateField = LIST_DATE_FIELDS.includes(req.query.dateField)
     ? req.query.dateField
@@ -401,8 +430,8 @@ router.get("/", async (req, res) => {
 });
 
 /**
- * Export and domestic are separate books: the same company may legitimately
- * exist once as each, so a duplicate only counts within one type.
+ * Lead type (export / domestic). Company names are unique across both types;
+ * phone numbers are only compared within the same type.
  */
 function normalizeLeadTypeForDuplicates(value) {
   return String(value || "").trim() === "export" ? "export" : "domestic";
@@ -439,22 +468,33 @@ function leadPhoneKeys(lead) {
  * team — a duplicate belongs to nobody in particular, so this is not scoped to
  * the caller the way the lead lists are.
  */
+function leadEmailKeys(lead) {
+  const raw = [lead.email, ...(lead.emails || []), ...(lead.contacts || []).map((c) => c?.email)];
+  return new Set(raw.map((e) => String(e || "").trim().toLowerCase()).filter((e) => e.includes("@")));
+}
+
+/**
+ * Other leads already using this company name, any of these phone numbers,
+ * or any of these emails. Company, phone and email are each unique across
+ * ALL leads (export and domestic).
+ */
 async function findLeadDuplicates({
   company,
   phones = [],
-  leadType,
+  emails = [],
   excludeId,
 }) {
   const name = String(company || "").trim();
   const wantedPhones = new Set(phones.map(phoneKey).filter(Boolean));
-  const wantedType = normalizeLeadTypeForDuplicates(leadType);
+  const wantedEmails = new Set(
+    emails.map((e) => String(e || "").trim().toLowerCase()).filter((e) => e.includes("@"))
+  );
 
-  if (name.length < 2 && wantedPhones.size === 0) return [];
+  if (name.length < 2 && wantedPhones.size === 0 && wantedEmails.size === 0) return [];
 
-  const query = buyerLeadClause();
-  const candidates = await Lead.find(query)
+  const candidates = await Lead.find(buyerLeadClause())
     .select(
-      "company name responsiblePerson createdBy createdAt contacts phone whatsappNumbers whatsappNumber leadType industry exportDetails"
+      "company name responsiblePerson createdBy createdAt contacts phone email emails whatsappNumbers whatsappNumber leadType industry exportDetails"
     )
     .sort({ createdAt: -1 })
     .lean();
@@ -462,7 +502,6 @@ async function findLeadDuplicates({
   const matches = [];
   for (const lead of candidates) {
     if (excludeId && String(lead._id) === String(excludeId)) continue;
-    if (leadTypeOf(lead) !== wantedType) continue;
 
     const title = lead.company?.trim() || lead.name?.trim() || "";
     const companyHit = name.length >= 2 && companyNamesMatch(name, title);
@@ -477,17 +516,60 @@ async function findLeadDuplicates({
       }
     }
 
-    if (!companyHit && !phoneHit) continue;
+    let emailHit = "";
+    if (wantedEmails.size) {
+      for (const key of leadEmailKeys(lead)) {
+        if (wantedEmails.has(key)) {
+          emailHit = key;
+          break;
+        }
+      }
+    }
+
+    const fields = [companyHit && "company", phoneHit && "phone", emailHit && "email"].filter(Boolean);
+    if (!fields.length) continue;
 
     matches.push({
       lead,
-      matchedOn: companyHit && phoneHit ? "both" : companyHit ? "company" : "phone",
+      // Kept for older clients: "company" | "phone" | "email" | "both" (several)
+      matchedOn: fields.length > 1 ? "both" : fields[0],
+      matchedFields: fields,
       matchedPhone: phoneHit || "",
+      matchedEmail: emailHit || "",
     });
     if (matches.length >= 10) break;
   }
 
   return matches;
+}
+
+/** "company name and phone number are" — for duplicate error messages. */
+function describeClash(matches) {
+  const fields = new Set(matches.flatMap((m) => m.matchedFields || [m.matchedOn]));
+  const parts = [
+    fields.has("company") && "company name",
+    fields.has("phone") && "phone number",
+    fields.has("email") && "email",
+  ].filter(Boolean);
+  const list = parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}` : parts[0];
+  return `${list} ${parts.length > 1 ? "are" : "is"}`;
+}
+
+/** Phones and emails a lead body carries (for the duplicate check). */
+function contactKeysOf(data) {
+  return {
+    phones: [
+      ...(data.contacts || []).flatMap((c) => [...(c.phones || []), c.phone]),
+      data.phone,
+      ...(data.whatsappNumbers || []),
+      data.whatsappNumber,
+    ].filter(Boolean),
+    emails: [
+      ...(data.contacts || []).map((c) => c.email),
+      data.email,
+      ...(data.emails || []),
+    ].filter(Boolean),
+  };
 }
 
 async function describeDuplicates(matches) {
@@ -501,7 +583,7 @@ async function describeDuplicates(matches) {
     users.map((u) => [String(u._id), u.name?.trim() || ""])
   );
 
-  return matches.map(({ lead, matchedOn, matchedPhone }) => ({
+  return matches.map(({ lead, matchedOn, matchedFields, matchedPhone, matchedEmail }) => ({
     _id: String(lead._id),
     company: lead.company?.trim() || "",
     name: lead.name?.trim() || "",
@@ -513,23 +595,84 @@ async function describeDuplicates(matches) {
       "",
     createdAt: lead.createdAt,
     matchedOn,
+    matchedFields,
     matchedPhone,
+    matchedEmail,
   }));
 }
+
+/**
+ * GET /api/leads/tags — tags on the leads this user can see, with counts
+ * (most used first). Feeds the Leads tag filter.
+ */
+router.get("/tags", async (req, res) => {
+  try {
+    const rows = await Lead.aggregate([
+      { $match: leadFilter(req) },
+      { $unwind: "$tags" },
+      { $group: { _id: { $toLower: "$tags" }, tag: { $first: "$tags" }, count: { $sum: 1 } } },
+      { $sort: { count: -1, tag: 1 } },
+    ]);
+    res.json(rows.map((r) => ({ tag: r.tag, count: r.count })));
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/**
+ * GET /api/leads/locations?country=&state=&city= — the states, cities and
+ * pincodes actually used on leads the user can see, narrowed by the parent
+ * choice (country -> states, state -> cities, city -> pincodes).
+ */
+router.get("/locations", async (req, res) => {
+  try {
+    const extra = {};
+    const and = [];
+    const country = String(req.query.country || "").trim();
+    if (country && country !== "all" && country !== "__unset__") {
+      extra.country = new RegExp(`^${escapeForRegex(country)}$`, "i");
+    }
+    for (const param of ["state", "city"]) {
+      const value = String(req.query[param] || "").trim();
+      if (!value || value === "all") continue;
+      const rx = new RegExp(`^${escapeForRegex(value)}$`, "i");
+      and.push({ $or: LOCATION_FIELDS[param].map((f) => ({ [f]: rx })) });
+    }
+    if (and.length) extra.$and = and;
+
+    const leads = await Lead.find(leadFilter(req, extra))
+      .select("stateProvince city postalCode exportDetails.deliveryState exportDetails.deliveryDistrict exportDetails.deliveryPincode")
+      .lean();
+    const collect = (pick) => {
+      const byKey = new Map();
+      for (const l of leads) {
+        const v = String(pick(l) || "").trim();
+        if (v && !byKey.has(v.toLowerCase())) byKey.set(v.toLowerCase(), v);
+      }
+      return [...byKey.values()].sort((a, b) => a.localeCompare(b));
+    };
+    res.json({
+      states: collect((l) => l.stateProvince || l.exportDetails?.deliveryState),
+      cities: collect((l) => l.city || l.exportDetails?.deliveryDistrict),
+      pincodes: collect((l) => l.postalCode || l.exportDetails?.deliveryPincode),
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 router.get("/check-duplicate", async (req, res) => {
   try {
     const company = String(req.query.company || "").trim();
-    const phones = String(req.query.phones || req.query.phone || "")
-      .split(",")
-      .map((p) => p.trim())
-      .filter(Boolean);
+    const list = (v) =>
+      String(v || "")
+        .split(",")
+        .map((x) => x.trim())
+        .filter(Boolean);
+    const phones = list(req.query.phones || req.query.phone);
+    const emails = list(req.query.emails || req.query.email);
 
-    const matches = await findLeadDuplicates({
-      company,
-      phones,
-      leadType: req.query.leadType,
-    });
+    const matches = await findLeadDuplicates({ company, phones, emails });
     res.json(await describeDuplicates(matches));
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -563,7 +706,7 @@ async function createLeadHandler(req, res) {
 
     let createdBy = req.userId;
     if (req.isAdmin && data.responsiblePerson) {
-      const assignee = await findSalesUserByName(data.responsiblePerson);
+      const assignee = await findAssignableUser(data.responsiblePerson, req);
       if (!assignee) {
         return res.status(400).json({
           message: "Select a valid team member to assign this lead",
@@ -580,27 +723,15 @@ async function createLeadHandler(req, res) {
       }
     }
 
-    // A company name or phone number already on another lead blocks the create.
+    // A company name, phone number or email already on another lead blocks the create.
     const duplicates = await findLeadDuplicates({
-      leadType: data.leadType,
       company: data.company || data.name,
-      phones: [
-        ...(data.contacts || []).flatMap((c) => [...(c.phones || []), c.phone]),
-        data.phone,
-        ...(data.whatsappNumbers || []),
-      ].filter(Boolean),
+      ...contactKeysOf(data),
     });
 
     if (duplicates.length) {
       const described = await describeDuplicates(duplicates);
-      const onPhone = described.some((d) => d.matchedOn !== "company");
-      const onCompany = described.some((d) => d.matchedOn !== "phone");
-      const what =
-        onCompany && onPhone
-          ? "company name and phone number are"
-          : onPhone
-            ? "phone number is"
-            : "company name is";
+      const what = describeClash(duplicates);
       const owner = described[0].createdByName || "another user";
       return res.status(409).json({
         message: `This ${what} already in the database (added by ${owner}). This lead was not created.`,
@@ -651,6 +782,38 @@ router.patch("/:id", async (req, res) => {
 
     let data = normalizeLeadBody(req.body);
     data = enforceExportLeadBody(req, data);
+
+    // Company name, phone numbers and emails are unique across all leads:
+    // an edit may not take one another lead already uses (same as create).
+    const newCompany = String(req.body.company ?? req.body.name ?? "").trim();
+    const oldCompany = String(existing.company || existing.name || "").trim();
+    const nameChanged = newCompany && !companyNamesMatch(newCompany, oldCompany);
+    // Only values NEW in this edit are checked, so a lead that already shares
+    // a number (an older duplicate) can still be saved without changes to it.
+    const keys = contactKeysOf(data);
+    const oldPhones = leadPhoneKeys(existing);
+    const oldEmails = leadEmailKeys(existing);
+    const newPhones = keys.phones.filter((p) => phoneKey(p) && !oldPhones.has(phoneKey(p)));
+    const newEmails = keys.emails.filter(
+      (e) => !oldEmails.has(String(e).trim().toLowerCase())
+    );
+    if (nameChanged || newPhones.length || newEmails.length) {
+      const clashes = await findLeadDuplicates({
+        company: nameChanged ? newCompany : "",
+        phones: newPhones,
+        emails: newEmails,
+        excludeId: existing._id,
+      });
+      if (clashes.length) {
+        const described = await describeDuplicates(clashes);
+        return res.status(409).json({
+          message: `This ${describeClash(clashes)} already used by another lead (${
+            described[0].company || described[0].name || "another lead"
+          }, added by ${described[0].createdByName || "another user"}). Use a different one.`,
+          duplicates: described,
+        });
+      }
+    }
 
     // A request that says nothing about contacts must not blank them.
     data = dropUnmentionedFields(req.body, data);

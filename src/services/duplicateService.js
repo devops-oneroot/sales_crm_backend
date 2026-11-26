@@ -16,7 +16,7 @@ const EmailMessage = require("../models/EmailMessage");
 const Activity = require("../models/Activity");
 const LeadDuplicate = require("../models/LeadDuplicate");
 const ArchivedRecord = require("../models/ArchivedRecord");
-const { leadMatchKeys, leadBook, phoneKey, emailKey, domainKey, smartCompanyKey } = require("../lib/duplicateMatching");
+const { leadMatchKeys, phoneKey, emailKey, domainKey, smartCompanyKey } = require("../lib/duplicateMatching");
 const { importerLinkFilter } = require("./leadImporterSync");
 
 const MATCH_FIELDS =
@@ -34,11 +34,12 @@ const pairKey = (a, b) => (idStr(a) < idStr(b) ? [idStr(a), idStr(b)] : [idStr(b
 function findPairs(leads) {
   const groups = new Map(); // "book|kind|key" -> [leadId]
   for (const lead of leads) {
-    const book = leadBook(lead);
     const keys = leadMatchKeys(lead);
     for (const [kind, values] of Object.entries(keys)) {
       for (const value of values) {
-        const g = `${book}|${kind}|${value}`;
+        // Name, phone, email and website are all unique across every lead
+        // (export and domestic alike).
+        const g = `${kind}|${value}`;
         if (!groups.has(g)) groups.set(g, []);
         groups.get(g).push(idStr(lead._id));
       }
@@ -48,7 +49,7 @@ function findPairs(leads) {
   for (const [g, ids] of groups) {
     const unique = [...new Set(ids)];
     if (unique.length < 2 || unique.length > MAX_GROUP) continue;
-    const kind = g.split("|")[1];
+    const kind = g.split("|")[0];
     for (let i = 0; i < unique.length; i++) {
       for (let j = i + 1; j < unique.length; j++) {
         const [a, b] = pairKey(unique[i], unique[j]);
@@ -195,7 +196,7 @@ async function listOpen() {
       continue;
     }
     const matches = sharedValues(a, b);
-    if (!matches.length || leadBook(a) !== leadBook(b)) {
+    if (!matches.length) {
       orphaned.push(p._id); // edited since it was flagged — no longer a match
       continue;
     }

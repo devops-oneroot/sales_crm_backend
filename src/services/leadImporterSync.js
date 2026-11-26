@@ -109,8 +109,14 @@ function syncLeadToImporter(lead, opts = {}) {
   return withLock(`lead:${lead?._id}`, () => syncLeadToImporterNow(lead, opts));
 }
 
-async function syncLeadToImporterNow(lead, { dryRun = false } = {}) {
-  if (!lead || lead.leadType !== "export") return "skipped";
+async function syncLeadToImporterNow(lead, { dryRun = false, force = false } = {}) {
+  if (!lead) return "skipped";
+  // Export leads always get an importer. Other leads only when asked to
+  // (e.g. selected for bulk email) — and once linked, they stay in sync.
+  if (lead.leadType !== "export" && !force) {
+    const linked = await Importer.exists(importerLinkFilter(lead._id));
+    if (!linked) return "skipped";
+  }
 
   const compName = String(lead.company || lead.name || "").trim();
   if (!compName) return "skipped";
@@ -154,8 +160,10 @@ async function syncLeadToImporterNow(lead, { dryRun = false } = {}) {
         incoterm: exp.incoterm || undefined,
         portOfDischarge: exp.portDelivery || undefined,
         paymentDays: num(exp.paymentDays),
-        state: exp.deliveryState || undefined,
-        city: exp.deliveryDistrict || undefined,
+        // Export buyer location: lead State / Province + Pincode / ZIP
+        state: lead.stateProvince || undefined,
+        city: lead.city || undefined,
+        postalCode: lead.postalCode || undefined,
         responsiblePerson: lead.responsiblePerson || undefined,
       };
       // Tags mirror exactly (including clearing) once the lead has a tags list.
@@ -217,8 +225,9 @@ async function syncLeadToImporterNow(lead, { dryRun = false } = {}) {
     website,
     website_domain,
     country: lead.country || "",
-    state: exp.deliveryState || "",
-    city: exp.deliveryDistrict || "",
+    state: lead.stateProvince || "",
+    city: lead.city || "",
+    postalCode: lead.postalCode || "",
     address: lead.address || "",
     products,
     materialType: exp.materialType || "",
@@ -358,6 +367,9 @@ async function ensureLeadForImporter(importer) {
     responsiblePerson: admin.name,
     createdBy: admin.id,
     status: salesStatusOfImporter(importer),
+    stateProvince: importer.state || undefined,
+    city: importer.city || undefined,
+    postalCode: importer.postalCode || undefined,
     tags: normalizeTags(importer.tags),
     products: (importer.products || []).filter(Boolean).map((n) => ({ name: String(n).trim() })),
     exportDetails: {
@@ -369,8 +381,6 @@ async function ensureLeadForImporter(importer) {
       incoterm: importer.incoterm || undefined,
       portDelivery: importer.portOfDischarge || undefined,
       paymentDays: num(importer.paymentDays),
-      deliveryState: importer.state || undefined,
-      deliveryDistrict: importer.city || undefined,
     },
   });
   console.log(`[LeadSync] Created export lead for importer "${name}" (owner: ${admin.name})`);
@@ -455,8 +465,9 @@ async function syncImporterToLeadNow(importer) {
   put("exportDetails.incoterm", importer.incoterm || "", exp.incoterm);
   put("exportDetails.portDelivery", importer.portOfDischarge || "", exp.portDelivery);
   put("exportDetails.paymentDays", importer.paymentDays, exp.paymentDays);
-  put("exportDetails.deliveryState", importer.state || "", exp.deliveryState);
-  put("exportDetails.deliveryDistrict", importer.city || "", exp.deliveryDistrict);
+  put("stateProvince", importer.state || "", lead.stateProvince);
+  put("city", importer.city || "", lead.city);
+  put("postalCode", importer.postalCode || "", lead.postalCode);
 
   // Tags mirror exactly. (A lead that never had tags gets the importer's.)
   if (!sameTags(importer.tags, lead.tags) || !Array.isArray(lead.tags)) {

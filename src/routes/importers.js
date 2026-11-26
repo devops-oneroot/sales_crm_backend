@@ -20,7 +20,7 @@ const discoveryRouter = require("./discovery");
 const { enrichImporterContacts } = require("../services/contactEnrichment");
 const { verifyImporters, verifierConfig } = require("../services/verificationService");
 const outreachEngine = require("../services/outreachEngine");
-const { syncAllLeads } = require("../services/leadImporterSync");
+const { syncAllLeads, syncLeadToImporter, importerLinkFilter } = require("../services/leadImporterSync");
 
 const router = express.Router();
 router.use("/discovery", discoveryRouter);
@@ -59,6 +59,7 @@ function pickImporterFields(body) {
     country: body.country ? String(body.country).trim() : "",
     state: body.state ? String(body.state).trim() : "",
     city: body.city ? String(body.city).trim() : "",
+    postalCode: body.postalCode ? String(body.postalCode).trim() : "",
     address: body.address ? String(body.address).trim() : "",
 
     // Provenance
@@ -381,6 +382,44 @@ router.post("/verify", async (req, res) => {
 });
 
 // POST enrol in outreach — the gate: only verified Grade A/B, not unsubscribed/suppressed
+/**
+ * POST /importers/from-leads { leadIds: [] } — make sure each lead has an
+ * importer (creating one if needed, domestic leads included) so it can be
+ * bulk-emailed with tracking. Returns the importers plus any that failed.
+ */
+router.post("/from-leads", async (req, res) => {
+  try {
+    const leadIds = Array.isArray(req.body?.leadIds) ? req.body.leadIds.slice(0, 1000) : [];
+    const importers = [];
+    const failed = [];
+    for (const leadId of leadIds) {
+      const lead = await Lead.findOne({ _id: leadId }).lean().catch(() => null);
+      if (!lead) {
+        failed.push({ leadId, name: "", error: "Lead not found" });
+        continue;
+      }
+      const name = lead.company || lead.name || "";
+      try {
+        await syncLeadToImporter(lead, { force: true });
+        const imp = await Importer.findOne(importerLinkFilter(lead._id));
+        if (imp) importers.push(importerToResponse(imp));
+        else failed.push({ leadId, name, error: "Matches an existing importer with the same name, email or website — email that importer instead" });
+      } catch (err) {
+        const msg = String(err.message || "");
+        const friendly = /reserved|placeholder/i.test(msg)
+          ? "its email is a placeholder address (e.g. example.com) and can't be emailed"
+          : /provenance/i.test(msg)
+            ? "its contact details look invalid — check the email and phone"
+            : msg;
+        failed.push({ leadId, name, error: friendly });
+      }
+    }
+    res.json({ success: true, importers, failed });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 router.post("/:id/enroll", async (req, res) => {
   try {
     const imp = await Importer.findById(req.params.id);

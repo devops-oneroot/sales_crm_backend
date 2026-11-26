@@ -28,7 +28,8 @@ function ensureUsableDnsServers() {
 }
 
 function resolveMongoUri() {
-  const raw = (process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/sales-crm").trim();
+  let raw = (process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/sales-crm").trim();
+  raw = raw.replace(/^MONGODB_URI\s*=\s*/i, "").trim().replace(/^['"]|['"]$/g, "");
   const dbName = process.env.MONGODB_DB_NAME?.trim();
   if (!dbName) return raw;
 

@@ -7,7 +7,18 @@ const {
   lookupByPincode,
 } = require("../config/indiaLocations");
 
+const { getWorldStates, getWorldCities } = require("../config/worldLocations");
+
 const router = express.Router();
+
+// Any country (export leads): states/provinces, then cities of a state.
+router.get("/world/states", (req, res) => {
+  res.json(getWorldStates(req.query.country));
+});
+
+router.get("/world/cities", (req, res) => {
+  res.json(getWorldCities(req.query.country, req.query.state));
+});
 
 router.get("/states", async (_req, res) => {
   try {

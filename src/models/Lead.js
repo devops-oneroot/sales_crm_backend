@@ -57,6 +57,7 @@ const exportDetailsSchema = new mongoose.Schema(
     paymentDays: { type: Number, min: 0 },
     deliveryState: { type: String, trim: true },
     deliveryDistrict: { type: String, trim: true },
+    deliveryPincode: { type: String, trim: true },
     incoterm: { type: String, trim: true },
     portDelivery: { type: String, trim: true },
     paymentDaysAfterSailing: { type: Number, min: 0 },
@@ -88,6 +89,10 @@ const leadSchema = new mongoose.Schema(
     leadSource: { type: String, trim: true },
     address: { type: String, trim: true },
     country: { type: String, trim: true },
+    // Export buyers' location within their country (free text: any country)
+    stateProvince: { type: String, trim: true },
+    city: { type: String, trim: true },
+    postalCode: { type: String, trim: true },
     industryType: {
       type: String,
       enum: [

@@ -38,8 +38,11 @@ function stripAccents(value) {
     .replace(/Đ/g, "D");
 }
 
-/** Normalised company key, or "" when too short to be meaningful. */
-function smartCompanyKey(value) {
+/**
+ * Normalised company key, or "" when shorter than minLength (too short to be
+ * meaningful for automatic duplicate flagging).
+ */
+function smartCompanyKey(value, minLength = 4, { plurals = true } = {}) {
   const tokens = stripAccents(value)
     .toLowerCase()
     .replace(MS_PREFIX, " ")
@@ -48,9 +51,11 @@ function smartCompanyKey(value) {
     .filter(Boolean)
     .filter((t) => !NOISE_TOKENS.has(t))
     // "foods" = "food", "traders" = "trader"
-    .map((t) => (t.length > 3 && t.endsWith("s") && !t.endsWith("ss") ? t.slice(0, -1) : t));
+    .map((t) =>
+      plurals && t.length > 3 && t.endsWith("s") && !t.endsWith("ss") ? t.slice(0, -1) : t
+    );
   const key = tokens.join("");
-  return key.length >= 4 ? key : "";
+  return key.length >= minLength ? key : "";
 }
 
 function phoneKey(value) {

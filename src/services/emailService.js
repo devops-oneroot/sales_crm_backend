@@ -355,7 +355,7 @@ function buildHtmlWithTracking(textBody, trackingId, baseUrl, unsubscribeUrl = "
   // are flagged by Outlook as tracking content and push mail to Junk, so nothing
   // in the email is hidden.
   const logoUrl = `${baseUrl}/api/emails/track/o/${trackingId}.png`;
-  const signatureLogo = `<p style="margin: 24px 0 0 0;"><img src="${logoUrl}" width="140" height="55" alt="OneRoot" style="display:block;width:140px;height:auto;border:0;" /></p>`;
+  const signatureLogo = `<p style="margin: 24px 0 0 0;"><img src="${logoUrl}" width="160" height="35" alt="OneRoot" style="display:block;width:160px;height:auto;border:0;" /></p>`;
 
   return `<!DOCTYPE html>
 <html>

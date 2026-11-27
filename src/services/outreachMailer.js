@@ -58,7 +58,7 @@ function getInboxes(env = process.env) {
     inboxes.push({
       label: env.RESEND_API_KEY ? "Resend" : "Brevo",
       email: (env.SMTP_FROM || env.RESEND_FROM || "exports@oneroot.farm").trim().toLowerCase(),
-      name: (env.SMTP_FROM_NAME || "Admin | OneRoot Farm").trim(),
+      name: (env.SMTP_FROM_NAME || "Vasanth | OneRoot Farm").trim(),
       smtp: { host: "api.resend.com", port: 443, user: "", pass: "" },
       imap: null,
       dailyCap: Number(env.OUTREACH_DAILY_CAP) || 0,
@@ -116,6 +116,17 @@ async function verifySmtp(inbox) {
 }
 
 /**
+ * Addresses CC'd on every outgoing email. EMAIL_CC (comma-separated) overrides
+ * the default; "none" turns it off. A recipient is never CC'd to themselves.
+ */
+function ccFor(to) {
+  const raw = (process.env.EMAIL_CC ?? "bharath@oneroot.farm").trim();
+  if (!raw || raw.toLowerCase() === "none") return [];
+  const toSet = new Set((Array.isArray(to) ? to : [to]).map((e) => String(e).trim().toLowerCase()));
+  return raw.split(",").map((e) => e.trim()).filter((e) => e && !toSet.has(e.toLowerCase()));
+}
+
+/**
  * Send email via Resend HTTP API (Port 443 - never blocked on Render/cloud)
  */
 async function sendViaResend(apiKey, inbox, { to, subject, text, html, inReplyTo, references, headers = {}, attachments }) {
@@ -126,6 +137,7 @@ async function sendViaResend(apiKey, inbox, { to, subject, text, html, inReplyTo
   const payload = {
     from,
     to: Array.isArray(to) ? to : [to],
+    ...(ccFor(to).length ? { cc: ccFor(to) } : {}),
     subject,
     text: text || undefined,
     html: html || undefined,
@@ -184,6 +196,7 @@ async function sendViaBrevo(apiKey, inbox, { to, subject, text, html, inReplyTo,
   const payload = {
     sender: { name: fromName, email: fromAddress },
     to: (Array.isArray(to) ? to : [to]).map((e) => ({ email: e })),
+    ...(ccFor(to).length ? { cc: ccFor(to).map((e) => ({ email: e })) } : {}),
     subject,
     textContent: text || undefined,
     htmlContent: html || undefined,
@@ -248,6 +261,7 @@ async function sendMail(inbox, options) {
   const mailOptions = {
     from: inbox.name ? { name: inbox.name, address: inbox.email } : inbox.email,
     to,
+    ...(ccFor(to).length ? { cc: ccFor(to) } : {}),
     subject,
     text,
     html,

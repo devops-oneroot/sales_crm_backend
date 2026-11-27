@@ -10,6 +10,13 @@ const R = require("../lib/outreachRules");
 const { getPublicBaseUrl } = require("../lib/publicUrl");
 const { isCurrentStatus: isSalesStatus } = require("../lib/leadStatuses");
 
+/** Emails sent from the "Admin" account are signed with a real name. */
+function signerName(name) {
+  return /^admin$/i.test(String(name || "").trim())
+    ? process.env.ADMIN_SIGNATURE_NAME || "Vasanth"
+    : name;
+}
+
 // Pre-defined export business templates with dynamic merge fields
 const EMAIL_TEMPLATES = [
   {
@@ -383,7 +390,9 @@ async function sendEmailReply({
   userName = "OneRoot Sales",
   inReplyTo,
   attachments,
+  freshThread = false,
 }) {
+  userName = signerName(userName);
   const importer = await Importer.findById(importerId);
   if (!importer) {
     throw new Error("Importer not found");
@@ -420,7 +429,9 @@ async function sendEmailReply({
   })
     .sort({ createdAt: -1 })
     .lean();
-  const parentId = inReplyTo || last?.messageId;
+  // A different contact at the same company gets a new email, not a reply
+  // in someone else's thread.
+  const parentId = freshThread ? inReplyTo : inReplyTo || last?.messageId;
   const references = parentId
     ? [...(last?.references || []), parentId].filter(
         (v, i, a) => a.indexOf(v) === i
@@ -540,13 +551,18 @@ async function sendOneClickPersonalizedEmail({
   customSubject,
   customBody,
   attachBrochure = true,
+  toEmail,
+  toName,
 }) {
+  userName = signerName(userName);
   const importer = await Importer.findById(importerId);
   if (!importer) {
     throw new Error("Importer not found");
   }
 
-  const recipientEmail = (importer.email || "").trim().toLowerCase();
+  // toEmail/toName: send to another contact person at this company instead.
+  const otherContact = String(toEmail || "").trim().toLowerCase();
+  const recipientEmail = otherContact || (importer.email || "").trim().toLowerCase();
   if (!recipientEmail) {
     throw new Error(
       `Cannot send email: Importer "${importer.companyName || importer.importerName}" has no email address on file. Please add an email address first.`
@@ -556,7 +572,10 @@ async function sendOneClickPersonalizedEmail({
   // Find template or default to personalized_product_outreach
   const template =
     EMAIL_TEMPLATES.find((t) => t.id === templateId) || EMAIL_TEMPLATES[0];
-  const generated = template.generate(importer, userName);
+  const generated = template.generate(
+    otherContact ? Object.assign(importer.toObject(), { contactPerson: String(toName || "").trim() }) : importer,
+    userName
+  );
 
   const finalSubject = (customSubject || generated.subject).trim();
   const finalBody = (customBody || generated.body).trim();
@@ -583,6 +602,7 @@ async function sendOneClickPersonalizedEmail({
     userId,
     userName,
     attachments,
+    freshThread: Boolean(otherContact && otherContact !== (importer.email || "").toLowerCase()),
   });
 
   return {

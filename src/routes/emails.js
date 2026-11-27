@@ -1,5 +1,7 @@
 const express = require("express");
 const Importer = require("../models/Importer");
+const Lead = require("../models/Lead");
+const { isPlaceholderEmail } = require("../lib/importerProvenance");
 const EmailMessage = require("../models/EmailMessage");
 const Suppression = require("../models/Suppression");
 const {
@@ -184,10 +186,76 @@ router.post("/importer/:importerId/reply", async (req, res) => {
   }
 });
 
+/**
+ * POST /api/emails/contacts { importerIds } →
+ *   { [importerId]: { contacts: [{ name, email, emailedAt }], mainEmailedAt, replied } }
+ *
+ * For the "no reply → email the other contacts" follow-up in bulk email:
+ *  - contacts: the other contact persons (from the linked lead), excluding the
+ *    company's main email and placeholder addresses; emailedAt = already emailed
+ *  - mainEmailedAt: when the company's main email was last emailed by us
+ *  - replied: anyone at the company has written back
+ */
+router.post("/contacts", async (req, res) => {
+  try {
+    const ids = (Array.isArray(req.body?.importerIds) ? req.body.importerIds : []).slice(0, 2000);
+    const importers = await Importer.find({ _id: { $in: ids } }).select("email linked_lead_id").lean();
+    const leadIds = importers.map((i) => i.linked_lead_id).filter(Boolean);
+    const leads = await Lead.find({ _id: { $in: leadIds } }).select("contacts contactPerson email emails").lean();
+    const leadById = new Map(leads.map((l) => [String(l._id), l]));
+
+    // Email history per company: our sends (by recipient) and any replies.
+    const history = await EmailMessage.aggregate([
+      { $match: { importerId: { $in: importers.map((i) => i._id) } } },
+      {
+        $group: {
+          _id: { importerId: "$importerId", direction: "$direction", to: { $toLower: "$recipientEmail" } },
+          last: { $max: "$createdAt" },
+          okCount: { $sum: { $cond: [{ $in: ["$status", ["failed", "bounced"]] }, 0, 1] } },
+        },
+      },
+    ]);
+    const sentTo = new Map(); // `${importerId}|${email}` → last successful send
+    const replied = new Set();
+    for (const h of history) {
+      const id = String(h._id.importerId);
+      if (h._id.direction === "inbound") replied.add(id);
+      else if (h.okCount > 0) sentTo.set(`${id}|${h._id.to}`, h.last);
+    }
+
+    const out = {};
+    for (const imp of importers) {
+      const id = String(imp._id);
+      const main = String(imp.email || "").trim().toLowerCase();
+      const entry = {
+        contacts: [],
+        mainEmailedAt: (main && sentTo.get(`${id}|${main}`)) || null,
+        replied: replied.has(id),
+      };
+      out[id] = entry;
+      const lead = imp.linked_lead_id && leadById.get(String(imp.linked_lead_id));
+      if (!lead) continue;
+      const seen = new Set([main]);
+      const add = (name, email) => {
+        const e = String(email || "").trim().toLowerCase();
+        if (!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || seen.has(e) || isPlaceholderEmail(e)) return;
+        seen.add(e);
+        entry.contacts.push({ name: String(name || "").trim(), email: e, emailedAt: sentTo.get(`${id}|${e}`) || null });
+      };
+      for (const c of lead.contacts || []) add(c.name, c.email);
+      add(lead.contactPerson, lead.email);
+      for (const e of lead.emails || []) add("", e);
+    }
+    res.json(out);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // POST 1-click personalized email outreach directly mentioning buyer name, company, and products
 router.post("/importer/:importerId/one-click-send", async (req, res) => {
   try {
-    const { templateId, customSubject, customBody } = req.body;
+    const { templateId, customSubject, customBody, toEmail, toName } = req.body;
     const result = await sendOneClickPersonalizedEmail({
       importerId: req.params.importerId,
       userId: req.userId,
@@ -195,6 +263,8 @@ router.post("/importer/:importerId/one-click-send", async (req, res) => {
       templateId,
       customSubject,
       customBody,
+      toEmail,
+      toName,
     });
     res.status(201).json(result);
   } catch (err) {

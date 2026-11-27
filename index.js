@@ -70,6 +70,8 @@ app.use("/api/tasks", requireAuth, tasksRouter);
 // Public email open & click tracking endpoints (must be accessible by mail clients without login)
 app.use("/api/emails/track", emailTrackingRouter);
 app.use("/api/emails", requireAuth, emailsRouter);
+app.use("/api/linkedin-outreach", requireAuth, require("./src/routes/linkedinOutreach"));
+app.use("/api/people-finder", requireAuth, require("./src/routes/peopleFinder"));
 app.use("/api/linkedin", requireAuth, linkedinRouter);
 // Unsubscribe links in outreach emails must work without logging in.
 app.use("/api/outreach/unsubscribe", outreachPublicRouter);
@@ -104,6 +106,8 @@ async function start() {
     // Web discovery scheduler is disabled (buyers only added via CSV/Excel or manual entry)
     // Automated outreach scheduler disabled (queued for future enhancement)
     // startOutreachScheduler();
+    // LinkedIn messages queued from the CRM go out slowly via Unipile.
+    require("./src/services/unipileService").startLinkedInSender();
 
     app.listen(PORT, () => {
       console.log(
